@@ -50,7 +50,7 @@ Makes an existing snapshot the new permanent root, replacing the current one.
 1. Warns if not currently booted into a snapshot. Recovering from within a snapshot boot, selected from the GRUB menu, is safer, since the real root subvolume is not live in that case. Proceeding from a normal boot is still supported, since a monitor or GRUB menu may not always be reachable; recovery may need to happen over SSH instead.
 2. Renames the current root subvolume to `@.broken-<timestamp>` rather than deleting it immediately.
 3. Creates a writable copy of the chosen snapshot as the new root subvolume.
-4. Regenerates the GRUB configuration.
+4. Regenerates the GRUB configuration, but only when run from a normal boot. From within a snapshot boot, `/boot` is not writable, and regeneration is not needed anyway: the normal boot entry boots by subvolume name (`@`), not a hardcoded path, so it picks up the restored content automatically.
 5. Instructs the user to reboot and select the normal boot entry.
 
 This never deletes the previous state automatically. It is kept as a `@.broken-<timestamp>` subvolume until removed explicitly, so a bad restore can itself still be inspected or reversed manually.

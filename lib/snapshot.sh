@@ -188,6 +188,12 @@ htpc_snapshot_create() {
 #
 # The previous root subvolume is renamed to "@.broken-<timestamp>" rather
 # than deleted, so it can still be inspected or recovered from afterward.
+#
+# GRUB is only regenerated when run from a normal boot. From within a
+# snapshot boot (the recommended way to run this), /boot is not writable,
+# and it is not needed anyway: the normal boot entry boots by subvolume
+# name (@), not a hardcoded path, so it picks up the restored content on
+# its own once rebooted.
 htpc_snapshot_restore() {
     local number="$1"
 
@@ -201,8 +207,10 @@ htpc_snapshot_restore() {
         return 1
     fi
 
+    local booted_from_snapshot=true
     if [[ "$(htpc_btrfs_current_root_subvol)" == "/@" ]]; then
         local reply
+        booted_from_snapshot=false
         htpc_log_warn "You appear to be booted into the normal system, not a snapshot."
         htpc_log_warn "It is safer to reboot, select the snapshot from the GRUB menu, and run this from there."
         read -r -p "Continue anyway? [y/N] " reply
@@ -217,7 +225,7 @@ htpc_snapshot_restore() {
     # shellcheck disable=SC2064 # intentional: expand ${top} now, not at trap time
     trap "trap - RETURN; htpc_btrfs_unmount_top_level '${top}'" RETURN
 
-    if [[ ! -d "${top}/.snapshots/${number}/snapshot" ]]; then
+    if [[ ! -d "${top}/${HTPC_SNAPSHOTS_SUBVOL}/${number}/snapshot" ]]; then
         htpc_log_error "Snapshot #${number} not found at /.snapshots/${number}/snapshot."
         return 1
     fi
@@ -230,9 +238,12 @@ htpc_snapshot_restore() {
     fi
 
     htpc_log_info "Restoring snapshot #${number} as the new root subvolume."
-    btrfs subvolume snapshot "${top}/.snapshots/${number}/snapshot" "${top}/@"
+    btrfs subvolume snapshot "${top}/${HTPC_SNAPSHOTS_SUBVOL}/${number}/snapshot" "${top}/@"
 
-    if command -v grub-mkconfig >/dev/null 2>&1; then
+    if [[ "${booted_from_snapshot}" == true ]]; then
+        htpc_log_info "Skipping GRUB regeneration: /boot is not writable from within a snapshot boot session."
+        htpc_log_info "This is not required: the normal boot entry boots by subvolume name (@), not a hardcoded path, so it will pick up the restored content automatically."
+    elif command -v grub-mkconfig >/dev/null 2>&1; then
         grub-mkconfig -o /boot/grub/grub.cfg \
             || htpc_log_warn "grub-mkconfig failed; you may need to regenerate the GRUB menu manually."
     fi
