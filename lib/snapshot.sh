@@ -38,12 +38,37 @@ htpc_mkinitcpio_ensure_hook() {
     mkinitcpio -P
 }
 
-# Replaces the subvol=... option in a mount options string, keeping every
-# other option (compression, ssd, discard, etc.) exactly as the caller's,
-# rather than hardcoding mount flags that may not suit every installation.
+# Replaces the subvol=... option in a mount options string with the given
+# subvolume name, keeping every other option (compression, ssd, discard,
+# etc.) exactly as the caller's, rather than hardcoding mount flags that
+# may not suit every installation. Also strips any subvolid=NNN: findmnt
+# reports both together for btrfs, and leaving the old numeric ID in place
+# would conflict with the new subvol= path and make the mount fail.
 htpc_replace_subvol_option() {
     local options="$1" subvol_name="$2"
-    printf '%s' "${options}" | sed -E "s#subvol=[^,]*#subvol=/${subvol_name}#"
+    printf '%s' "${options}" \
+        | sed -E 's/(^|,)subvolid=[0-9]+//' \
+        | sed -E "s#subvol=[^,]*#subvol=/${subvol_name}#" \
+        | sed -E 's/,{2,}/,/g; s/^,//; s/,$//'
+}
+
+# Removes any existing fstab entry for the given mountpoint (matched on the
+# exact mountpoint field, not by text search), so this module can be safely
+# re-run after a previous attempt left a bad or stale entry behind.
+htpc_fstab_remove_mountpoint() {
+    local mountpoint="$1" tmp
+    tmp="$(mktemp)"
+
+    awk -v mp="${mountpoint}" '$1 !~ /^#/ && $2 == mp { next } { print }' \
+        /etc/fstab > "${tmp}"
+
+    if ! cmp -s "${tmp}" /etc/fstab; then
+        htpc_backup_file /etc/fstab
+        cat "${tmp}" > /etc/fstab
+        htpc_log_info "Removed stale fstab entry for ${mountpoint}."
+    fi
+
+    rm -f "${tmp}"
 }
 
 # Ensures snapshots live in their own top-level subvolume (a sibling of the
@@ -51,16 +76,26 @@ htpc_replace_subvol_option() {
 # snapshot replaces the root subvolume entirely, and a nested .snapshots
 # directory would be destroyed at the exact moment it is needed. See
 # recovery-spec.md.
+#
+# CachyOS ships with snapper already configured by default, using the
+# standard nested layout (.snapshots as a subvolume inside the root
+# subvolume), often with real history already in it (pacman pre/post
+# snapshots, an install-time baseline, etc.). If found, it is *moved* to
+# become the top-level subvolume rather than recreated from scratch. Within
+# the same btrfs filesystem this is a metadata-only rename: no snapshot
+# data is copied or touched, so all existing history is preserved exactly
+# as-is, just relocated to a safer location.
 htpc_snapshot_ensure_top_level_subvolume() {
     if htpc_btrfs_snapshots_mounted_separately; then
         htpc_log_info "/.snapshots is already a separate subvolume."
         return 0
     fi
 
-    local device uuid root_options top
+    local device uuid root_options current_subvol top nested_snapshots
     device="$(htpc_btrfs_root_device)"
     uuid="$(blkid -s UUID -o value "${device}")"
     root_options="$(findmnt --noheadings --output OPTIONS --target /)"
+    current_subvol="$(htpc_btrfs_current_root_subvol)"
 
     if [[ -z "${uuid}" ]]; then
         htpc_log_error "Could not determine the UUID of the root btrfs device."
@@ -69,14 +104,23 @@ htpc_snapshot_ensure_top_level_subvolume() {
 
     top="$(htpc_btrfs_mount_top_level)"
     # shellcheck disable=SC2064 # intentional: expand ${top} now, not at trap time
-    trap "htpc_btrfs_unmount_top_level '${top}'" RETURN
+    trap "trap - RETURN; htpc_btrfs_unmount_top_level '${top}'" RETURN
 
-    if [[ ! -d "${top}/${HTPC_SNAPSHOTS_SUBVOL}" ]]; then
+    nested_snapshots="${top}${current_subvol}/.snapshots"
+
+    if [[ -d "${top}/${HTPC_SNAPSHOTS_SUBVOL}" ]]; then
+        htpc_log_info "Top-level subvolume ${HTPC_SNAPSHOTS_SUBVOL} already exists."
+    elif [[ -d "${nested_snapshots}" ]]; then
+        htpc_log_warn "Found an existing .snapshots subvolume nested inside ${current_subvol} (likely CachyOS's default snapper setup)."
+        htpc_log_warn "Moving it to a top-level ${HTPC_SNAPSHOTS_SUBVOL} subvolume. This preserves all existing snapshots; no data is copied or deleted."
+        mv "${nested_snapshots}" "${top}/${HTPC_SNAPSHOTS_SUBVOL}"
+    else
         htpc_log_info "Creating top-level subvolume ${HTPC_SNAPSHOTS_SUBVOL}."
         btrfs subvolume create "${top}/${HTPC_SNAPSHOTS_SUBVOL}"
     fi
 
     htpc_backup_file /etc/fstab
+    htpc_fstab_remove_mountpoint "/.snapshots"
     printf 'UUID=%s /.snapshots btrfs %s 0 0\n' \
         "${uuid}" "$(htpc_replace_subvol_option "${root_options}" "${HTPC_SNAPSHOTS_SUBVOL}")" \
         >> /etc/fstab
@@ -102,7 +146,11 @@ htpc_snapshot_ensure_tooling() {
 
     htpc_mkinitcpio_ensure_hook "grub-btrfs-overlayfs"
 
-    systemctl enable --now grub-btrfsd.service
+    systemctl enable grub-btrfsd.service
+    # Restarted rather than just started, so it re-establishes its watch
+    # cleanly if /.snapshots was just moved to a new mount by
+    # htpc_snapshot_ensure_top_level_subvolume.
+    systemctl restart grub-btrfsd.service
 }
 
 # Prints the number of the most recent installer-created snapshot, if any.
@@ -167,7 +215,7 @@ htpc_snapshot_restore() {
     local top backup_name
     top="$(htpc_btrfs_mount_top_level)"
     # shellcheck disable=SC2064 # intentional: expand ${top} now, not at trap time
-    trap "htpc_btrfs_unmount_top_level '${top}'" RETURN
+    trap "trap - RETURN; htpc_btrfs_unmount_top_level '${top}'" RETURN
 
     if [[ ! -d "${top}/.snapshots/${number}/snapshot" ]]; then
         htpc_log_error "Snapshot #${number} not found at /.snapshots/${number}/snapshot."
@@ -199,7 +247,7 @@ htpc_snapshot_list_backups() {
     local top
     top="$(htpc_btrfs_mount_top_level)"
     # shellcheck disable=SC2064 # intentional: expand ${top} now, not at trap time
-    trap "htpc_btrfs_unmount_top_level '${top}'" RETURN
+    trap "trap - RETURN; htpc_btrfs_unmount_top_level '${top}'" RETURN
 
     find "${top}" -mindepth 1 -maxdepth 1 -name '@.broken-*' -printf '%f\n'
 }
@@ -217,7 +265,7 @@ htpc_snapshot_delete_backup() {
     local top
     top="$(htpc_btrfs_mount_top_level)"
     # shellcheck disable=SC2064 # intentional: expand ${top} now, not at trap time
-    trap "htpc_btrfs_unmount_top_level '${top}'" RETURN
+    trap "trap - RETURN; htpc_btrfs_unmount_top_level '${top}'" RETURN
 
     if [[ ! -d "${top}/${name}" ]]; then
         htpc_log_error "No such backup subvolume: ${name}"

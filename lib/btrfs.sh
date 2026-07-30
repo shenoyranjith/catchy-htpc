@@ -22,10 +22,15 @@ htpc_btrfs_snapshots_mounted_separately() {
 # Mounts the filesystem's top-level (subvolid=5) tree to a fresh temporary
 # directory and prints its path. Pair with htpc_btrfs_unmount_top_level,
 # ideally via a RETURN trap so it is unmounted even if the caller fails
-# partway through:
+# partway through. The trap must clear itself as its first action: in
+# nested function calls, a RETURN trap keeps re-firing on every subsequent
+# function return up the whole call stack, not just its own (confirmed on
+# bash 3.2, which is what macOS ships), so leaving it registered would
+# unmount an already-unmounted (or unrelated) path later on and can trip
+# `set -e`.
 #
 #   top="$(htpc_btrfs_mount_top_level)"
-#   trap "htpc_btrfs_unmount_top_level '${top}'" RETURN
+#   trap "trap - RETURN; htpc_btrfs_unmount_top_level '${top}'" RETURN
 htpc_btrfs_mount_top_level() {
     local device tmp_mount
     device="$(htpc_btrfs_root_device)"

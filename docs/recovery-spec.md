@@ -14,6 +14,8 @@ This is required because restoring a snapshot replaces the @ subvolume entirely.
 
 htpc-recovery creates this layout automatically if it does not already exist, deriving its mount options from the existing root entry rather than hardcoding them, so compression, SSD, and discard settings stay correct for the underlying hardware.
 
+CachyOS ships with snapper already configured by default, using the standard nested layout, frequently with real history already in it (an install-time baseline, pacman pre/post snapshots, etc.). If found, htpc-recovery moves it to become the top-level subvolume rather than starting over. Within a single btrfs filesystem this is a metadata-only rename, so no snapshot data is copied or touched; existing history is preserved exactly as-is.
+
 ## Why snapper's built-in rollback is not used
 
 CachyOS mounts root using an explicit subvolume name (subvol=/@) in /etc/fstab. Snapper's built-in `rollback` command works by changing the Btrfs default subvolume, which has no effect when an explicit subvol= is set in fstab; the fstab entry always wins at boot. htpc-recovery performs the subvolume swap directly instead.
