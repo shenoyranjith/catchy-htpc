@@ -1,0 +1,7 @@
+dev/.env
+
+.DS_Store
+*.swp
+
+__pycache__/
+*.pyc
