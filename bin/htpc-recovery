@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Standalone recovery/snapshot tooling. Implements recovery-spec.md so it
+# can be exercised on a real machine before the rest of the installer
+# exists. install.sh will call the same lib/ functions directly once it is
+# written.
+#
+# Usage:
+#   htpc-recovery setup                  Verify the system and prepare snapshot tooling.
+#   htpc-recovery create                 Create a new installer snapshot, replacing any
+#                                         previous one after confirmation.
+#   htpc-recovery status                 Show the current installer snapshot, if any.
+#   htpc-recovery restore <number>       Make an existing snapshot the new permanent
+#                                         root, preserving the old one as a backup.
+#   htpc-recovery list-backups           List backups left behind by 'restore'.
+#   htpc-recovery delete-backup <name>   Delete a backup left behind by 'restore'.
+
+script_dir() {
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
+
+require_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        htpc_log_error "This command must be run as root."
+        exit 1
+    fi
+}
+
+cmd_setup() {
+    require_root
+    htpc_verify_cachyos
+    htpc_verify_btrfs
+    htpc_snapshot_ensure_tooling
+    htpc_log_info "Recovery tooling is ready."
+}
+
+cmd_create() {
+    require_root
+    htpc_verify_btrfs
+
+    local previous reply
+    previous="$(htpc_snapshot_find_previous || true)"
+
+    if [[ -n "${previous}" ]]; then
+        htpc_log_warn "A previous installer snapshot (#${previous}) exists."
+        read -r -p "Replace it? [y/N] " reply
+        if [[ "${reply}" =~ ^[Yy]$ ]]; then
+            htpc_snapshot_delete "${previous}"
+        else
+            htpc_log_info "Keeping existing snapshot #${previous}; not creating a new one."
+            return 0
+        fi
+    fi
+
+    htpc_snapshot_create
+}
+
+cmd_status() {
+    local previous
+    previous="$(htpc_snapshot_find_previous || true)"
+
+    if [[ -n "${previous}" ]]; then
+        htpc_log_info "Current installer snapshot: #${previous}"
+    else
+        htpc_log_info "No installer snapshot found."
+    fi
+}
+
+cmd_restore() {
+    require_root
+    local number="${1:-}"
+    htpc_snapshot_restore "${number}"
+}
+
+cmd_list_backups() {
+    require_root
+    htpc_snapshot_list_backups
+}
+
+cmd_delete_backup() {
+    require_root
+    local name="${1:-}"
+    htpc_snapshot_delete_backup "${name}"
+}
+
+usage() {
+    echo "Usage: $(basename "$0") {setup|create|status|restore <number>|list-backups|delete-backup <name>}" >&2
+}
+
+main() {
+    local lib_dir
+    lib_dir="$(script_dir)/../lib"
+
+    # shellcheck source=../lib/log.sh
+    source "${lib_dir}/log.sh"
+    # shellcheck source=../lib/checks.sh
+    source "${lib_dir}/checks.sh"
+    # shellcheck source=../lib/backup.sh
+    source "${lib_dir}/backup.sh"
+    # shellcheck source=../lib/packages.sh
+    source "${lib_dir}/packages.sh"
+    # shellcheck source=../lib/btrfs.sh
+    source "${lib_dir}/btrfs.sh"
+    # shellcheck source=../lib/snapshot.sh
+    source "${lib_dir}/snapshot.sh"
+
+    local command="${1:-}"
+    shift || true
+
+    case "${command}" in
+        setup)          cmd_setup ;;
+        create)         cmd_create ;;
+        status)         cmd_status ;;
+        restore)        cmd_restore "$@" ;;
+        list-backups)   cmd_list_backups ;;
+        delete-backup)  cmd_delete_backup "$@" ;;
+        *)
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

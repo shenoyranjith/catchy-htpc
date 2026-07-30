@@ -8,6 +8,7 @@ Core components:
 
 - Installer
 - Uninstaller
+- Recovery (see recovery-spec.md)
 - Session Manager
 - Systemd Services (see session-services-spec.md)
 - Kodi Program Add-ons

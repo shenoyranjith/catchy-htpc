@@ -23,7 +23,7 @@ The target user is whoever invokes the installer (for example, via `$SUDO_USER`)
 
 ## Snapshot Behaviour
 
-Snapshot tool: snapper, with grub-btrfs for GRUB boot menu integration.
+Snapshot tool: snapper, with grub-btrfs for GRUB boot menu integration. See recovery-spec.md for the full mechanism, including the required @snapshots subvolume layout.
 
 Snapshot creation is optional.
 
@@ -39,7 +39,7 @@ Ask whether to continue or abort.
 
 The installer never performs an automatic rollback.
 
-Recovery is performed manually by rebooting into the snapshot from GRUB.
+Recovery is performed by rebooting into the snapshot from GRUB, then running `htpc-recovery restore <number>` to make it permanent. See recovery-spec.md.
 
 ## Required Packages
 
