@@ -1,10 +1,12 @@
 # Contributing
 
-- Follow the architecture documents before writing code.
+- Follow the architecture documents (see [docs/Home.md](docs/Home.md)) before writing code.
 - Keep code modular.
 - Update documentation with behaviour changes.
 - Test on a clean CachyOS installation whenever possible.
 - Preserve backwards compatibility where reasonable.
+- Follow [docs/coding-standards.md](docs/coding-standards.md).
+- See [docs/development.md](docs/development.md) for the dev machine / sync workflow.
 
 ## Testing notes
 

@@ -1,12 +1,14 @@
 # Uninstaller Specification
 
+> **Status:** not yet implemented. See [Roadmap](roadmap.md).
+
 Executable:
 
 htpc-uninstall
 
 ## Flow
 
-1. Verify an installation record exists (see installer-spec.md).
+1. Verify an installation record exists (see [Installer Specification](installer-spec.md)).
 2. Ask whether to create a snapshot before uninstalling, using the same mechanism as the installer.
 3. Stop the currently active htpc-*.service, if any.
 4. Disable and remove htpc-kodi.service, htpc-steam.service, htpc-desktop.service.
@@ -30,5 +32,6 @@ htpc-uninstall
 
 ## Out of Scope
 
-- Reverting package updates performed during install (the "Update packages" step in installer-spec.md).
-- Automatically restoring a Btrfs snapshot.
+- Reverting package updates performed during install (the "Update packages" step in [Installer Specification](installer-spec.md)).
+- Automatically restoring a Btrfs snapshot. See [Recovery Specification](recovery-spec.md) to do this manually.
+- Removing MakeMKV, if installed via the optional add-on. See "Out of Scope" in [MakeMKV Specification](makemkv-spec.md) for manual removal steps.

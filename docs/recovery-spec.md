@@ -4,7 +4,7 @@ Executable:
 
 htpc-recovery
 
-Implements the Btrfs snapshot and restore mechanism referenced by installer-spec.md's Snapshot Behaviour section. install.sh calls the same underlying functions directly; htpc-recovery exists so this mechanism can be exercised and tested independently.
+Implements the Btrfs snapshot and restore mechanism referenced by [Installer Specification](installer-spec.md)'s Snapshot Behaviour section. bin/htpc-install calls the same underlying functions directly; htpc-recovery exists so this mechanism can be exercised and tested independently.
 
 ## Layout Requirement
 

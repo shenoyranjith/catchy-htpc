@@ -20,18 +20,18 @@ No display manager is involved in this flow.
 
 ## Components
 
-Installer
-Uninstaller
-Session Manager (htpc-switch)
-Systemd services (see session-services-spec.md)
-Kodi add-ons
+- [Installer](installer-spec.md) / [Uninstaller](uninstaller-spec.md)
+- [Session Manager](session-manager-spec.md) (htpc-switch)
+- [Systemd services](session-services-spec.md)
+- [Kodi add-ons](kodi-addon-spec.md)
+- [Recovery](recovery-spec.md) (htpc-recovery)
 
 ## Session Runtime Model
 
 - Each session (Kodi, Steam Gaming Mode, KDE Desktop) is a system-level systemd service.
 - The services share tty1 and conflict with getty@tty1.service and with each other, so only one can run at a time.
 - No SDDM or other display manager is used anywhere on the system.
-- See session-services-spec.md for full detail.
+- See [Session Services Specification](session-services-spec.md) for full detail.
 
 ## Configuration
 

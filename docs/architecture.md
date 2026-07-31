@@ -6,12 +6,12 @@ CachyOS HTPC transforms a fresh CachyOS KDE installation into a console-like HTP
 
 Core components:
 
-- Installer
-- Uninstaller
-- Recovery (see recovery-spec.md)
-- Session Manager
-- Systemd Services (see session-services-spec.md)
-- Kodi Program Add-ons
+- [Installer](installer-spec.md) / [Uninstaller](uninstaller-spec.md)
+- [Recovery](recovery-spec.md)
+- [Session Manager](session-manager-spec.md)
+- [Systemd Services](session-services-spec.md)
+- [Kodi Program Add-ons](kodi-addon-spec.md)
+- [MakeMKV / Disc Playback](makemkv-spec.md) (optional add-on)
 
 Kodi is the primary user interface.
 

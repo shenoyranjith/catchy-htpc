@@ -1,6 +1,6 @@
 # Session Services Specification
 
-Defines the systemd services backing each session described in session-lifecycle.md.
+Defines the systemd services backing each session described in [Session Lifecycle](session-lifecycle.md).
 
 ## Units
 
@@ -12,7 +12,7 @@ These are system-level systemd units. No display manager is used to start them o
 
 ## Shared Behaviour
 
-- Run as the existing user determined by the installer (see installer-spec.md).
+- Run as the existing user determined by the installer (see [Installer Specification](installer-spec.md)).
 - PAMName=login, establishing a full logind session equivalent to a normal graphical login.
 - TTYPath=/dev/tty1.
 - Conflicts= and After= getty@tty1.service.
@@ -38,7 +38,7 @@ These are system-level systemd units. No display manager is used to start them o
   - plasma -> htpc-switch kodi
   - persistent / oneshot -> no-op (SDDM autologin preference modes; not applicable here)
 - This makes Steam's own "Switch to Desktop" button return to Kodi, since Kodi is the primary interface. No SDDM interaction occurs at any point.
-- Steam invokes this script via pkexec (pre-authorized passwordlessly for any user by gamescope-session-cachyos's own polkit policy), so it runs as root; htpc-switch itself handles dropping back to the existing user. See session-manager-spec.md.
+- Steam invokes this script via pkexec (pre-authorized passwordlessly for any user by gamescope-session-cachyos's own polkit policy), so it runs as root; htpc-switch itself handles dropping back to the existing user. See [Session Manager Specification](session-manager-spec.md).
 - The original script is preserved via a `.htpc-backup` copy for the uninstaller to restore. Since /usr/bin/steamos-session-select is owned by the gamescope-session-cachyos package, a future package update may silently overwrite the wrapper back to upstream; re-running the installer's steam service step re-applies it.
 
 ## KDE Desktop (htpc-desktop.service)
@@ -50,7 +50,7 @@ These are system-level systemd units. No display manager is used to start them o
 ## Desktop Application Shortcuts
 
 Kodi has its own Program Add-ons for switching sessions (see
-kodi-addon-spec.md), and Steam has its own "Switch to Desktop" button (see
+[Kodi Add-on Specification](kodi-addon-spec.md)), and Steam has its own "Switch to Desktop" button (see
 above), but KDE Desktop had no equivalent way back until this was found
 missing during testing: nothing on the desktop invoked htpc-switch at
 all. Two `.desktop` entries are installed for the existing user, in both

@@ -14,4 +14,41 @@ Kodi is the primary interface.
 Steam Gaming Mode is the gaming workspace.
 KDE Desktop is the maintenance and recovery workspace.
 
-Refer to the docs directory for implementation details.
+## Status
+
+Phase 1 (installer, session switching between all three workspaces,
+recovery) and the optional MakeMKV/Blu-ray add-on are complete and tested
+end-to-end. The uninstaller is not yet implemented. See
+[docs/roadmap.md](docs/roadmap.md) for details.
+
+## Quick Start
+
+Requires an existing CachyOS KDE installation on Btrfs (CachyOS's
+default). Run as the user you want the HTPC session to run as:
+
+```
+sudo bin/htpc-install
+```
+
+The installer is interactive, safe to rerun, and offers to take a Btrfs
+snapshot before making any changes. See
+[docs/installer-spec.md](docs/installer-spec.md) for exactly what it
+does, and [docs/recovery-spec.md](docs/recovery-spec.md) for how to roll
+back if something goes wrong.
+
+## Documentation
+
+Full documentation lives in [docs/](docs/), starting at
+[docs/Home.md](docs/Home.md). It's written so it can also be browsed as a
+GitHub wiki. Highlights:
+
+- [Architecture](docs/architecture.md) -- components and design principles.
+- [Installer Specification](docs/installer-spec.md) -- what `bin/htpc-install` does.
+- [Recovery Specification](docs/recovery-spec.md) -- Btrfs snapshot/restore mechanism.
+- [Session Lifecycle](docs/session-lifecycle.md) / [Session Services](docs/session-services-spec.md) -- how switching between Kodi, Steam, and Desktop works.
+- [MakeMKV Specification](docs/makemkv-spec.md) -- optional Blu-ray/UHD Blu-ray playback add-on.
+- [Development](docs/development.md) -- dev machine setup and test workflow.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).

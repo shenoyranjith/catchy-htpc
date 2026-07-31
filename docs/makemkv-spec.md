@@ -19,9 +19,8 @@ bin/htpc-makemkv-setup
 
 Not part of the core appliance: this is a media-playback feature, not
 session-switching infrastructure, so it lives in its own standalone
-script rather than as a mandatory installer-spec.md step. It is offered
-as an opt-in prompt at the end of the installer (see installer-spec.md),
-and can also be run on its own at any time:
+script rather than as a mandatory [Installer Specification](installer-spec.md) step. It is offered
+as an opt-in prompt at the end of the installer, and can also be run on its own at any time:
 
 ```
 sudo bin/htpc-makemkv-setup
@@ -120,7 +119,7 @@ Re-running with a key already present asks before replacing it.
   it.
 - **Disc autoplay UX.** Whether inserting a disc starts playback
   automatically is controlled by Kodi's own settings, not this project.
-- **Uninstallation.** Not wired into uninstaller-spec.md. To revert
+- **Uninstallation.** Not wired into [Uninstaller Specification](uninstaller-spec.md). To revert
   manually: remove `/usr/bin/makemkv*` and the libraries `make install`
   placed under `/usr/lib`/`/usr/share` (no `make uninstall` target
   exists), remove `/etc/modules-load.d/sg.conf`, and remove the

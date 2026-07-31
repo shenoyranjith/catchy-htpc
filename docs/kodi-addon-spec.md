@@ -17,12 +17,12 @@ Each add-on:
 
 htpc-switch only reports synchronous validation errors (invalid transition,
 already running, failure to dispatch); it hands the actual switch off to a
-detached process that outlives the caller (see session-manager-spec.md), so
+detached process that outlives the caller (see [Session Manager Specification](session-manager-spec.md)), so
 "displays errors returned by the Session Manager" only applies to that
 synchronous result, not to anything that might go wrong after the switch is
 already underway.
 
-Add-on discoverability (installation into the addons directory, menu placement, favourites) is handled by the installer, not by the add-ons themselves. See installer-spec.md. In practice this means favourites.xml only: the default Estuary skin's home menu already includes a Favourites entry, and editing a specific skin's home menu directly would be fragile and skin-version-dependent, which would work against "makes no assumptions about the active Kodi skin" above.
+Add-on discoverability (installation into the addons directory, menu placement, favourites) is handled by the installer, not by the add-ons themselves. See [Installer Specification](installer-spec.md). In practice this means favourites.xml only: the default Estuary skin's home menu already includes a Favourites entry, and editing a specific skin's home menu directly would be fragile and skin-version-dependent, which would work against "makes no assumptions about the active Kodi skin" above.
 
 The installer also seeds two non-add-on favourites that call Kodi built-ins:
 
