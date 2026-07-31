@@ -17,6 +17,29 @@
 13. Verify installation.
 14. Prompt for reboot.
 
+Snapshot tooling (snapper, grub-btrfs, inotify-tools, and the @snapshots
+subvolume layout) is actually ensured immediately before step 4, not as
+part of step 7: snapshot creation in steps 4-5 needs it ready first, and
+those packages may not be present yet on a fresh install even though
+CachyOS ships Btrfs+snapper by default. `htpc_packages_install` is
+idempotent, so step 7 installing them again afterwards is a harmless
+no-op; only the packages actually missing before step 4 are recorded as
+"installed by the installer" (see Installation Record below), regardless
+of which step happened to trigger their installation.
+
+## Project Files
+
+Step 8 copies the project's bin/, lib/, systemd/, polkit/, and
+kodi-addons/ directories (not docs/ or dev/, which aren't needed at
+runtime) to /opt/cachyos-htpc, and the installer re-executes itself from
+that copy for all subsequent steps. This ensures the installed system
+never depends on wherever the installer happened to be run from (e.g. a
+temporary dev checkout it can't assume will still exist later). Rerunning
+the installer always refreshes /opt/cachyos-htpc from the current
+checkout. bin/htpc-recovery is additionally exposed as a user-facing
+command via a thin wrapper at /usr/local/bin/htpc-recovery, alongside
+htpc-switch (see Session Manager Installation).
+
 ## Target User
 
 The target user is whoever invokes the installer (for example, via `$SUDO_USER`). All session services and Kodi add-ons run as this user. The installer assumes a single primary user on the machine.
@@ -56,7 +79,7 @@ Package sourcing prefers official CachyOS/Arch repositories, but AUR or other so
 
 - Install htpc-switch and its systemd unit files: htpc-kodi.service, htpc-steam.service, htpc-desktop.service.
 - Install a polkit rule scoping passwordless control of only these three units to the target user.
-- Disable and mask sddm.service, recording its prior enabled/disabled state.
+- Disable and mask whichever display manager is currently configured (discovered via the display-manager.service alias, not hardcoded -- CachyOS KDE installs use plasmalogin.service, not sddm.service), recording its unit name and prior enabled/disabled state. Only disables and masks it for the next boot; does not stop it immediately, since the installer is typically run from within a live session driven by that same display manager.
 - Mask cachyos-gamescope-autologin.service, a systemd --user unit, for the target user.
 - Replace /usr/bin/steamos-session-select with a wrapper that calls htpc-switch. See session-services-spec.md.
 
@@ -76,7 +99,7 @@ Record the following, for later use by the uninstaller:
 
 - Target user.
 - Packages installed by the installer.
-- Prior SDDM enabled/disabled state.
+- The display manager's unit name and its prior enabled/disabled state.
 - Installer snapshot name, if one was created.
 
 ## Requirements

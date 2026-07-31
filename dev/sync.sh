@@ -42,6 +42,8 @@ main() {
     rsync -avz --delete \
         --exclude='.git' \
         --exclude='dev/.env' \
+        --exclude='.ruff_cache' \
+        --exclude='__pycache__' \
         "${repo_root}/" "${HTPC_DEV_HOST}:${dev_path}/"
 
     echo "Synced to ${HTPC_DEV_HOST}:${dev_path}"

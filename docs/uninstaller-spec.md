@@ -11,9 +11,9 @@ htpc-uninstall
 3. Stop the currently active htpc-*.service, if any.
 4. Disable and remove htpc-kodi.service, htpc-steam.service, htpc-desktop.service.
 5. Remove the polkit rule granting control of the htpc-*.service units.
-6. Restore SDDM to its recorded prior enabled/disabled state.
+6. Restore the recorded display manager unit to its prior enabled/disabled state and unmask it.
 7. Restore /usr/bin/steamos-session-select and unmask cachyos-gamescope-autologin.service, if they were modified by the installer.
-8. Remove Session Manager (htpc-switch) and installed project files.
+8. Remove Session Manager (htpc-switch, /usr/local/bin/htpc-recovery) and installed project files (/opt/cachyos-htpc).
 9. Remove installed Kodi add-ons.
 10. Remove only the favourites.xml entries added by the installer, preserving any other entries.
 11. Ask whether to remove packages installed by the installer (kodi, gamescope-session-cachyos, lib32-gamescope, snapper, grub-btrfs, inotify-tools).

@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
-# Shared logging helpers. Logs to stdout/stderr and to journald via logger(1),
-# per technical-design.md's "Log all session transitions using journald".
+# Shared logging helpers. Logs to stderr and to journald via logger(1), per
+# technical-design.md's "Log all session transitions using journald".
+#
+# Always stderr, even for INFO: several functions in this codebase (e.g.
+# htpc_snapshot_create) both log progress *and* return a value by printing
+# it to stdout for callers to capture via command substitution. Logging to
+# stdout would corrupt that return value with human-readable log text.
 
 htpc_log() {
     local level="$1"
     shift
     local message="$*"
 
-    case "${level}" in
-        ERROR|WARN)
-            printf '[%s] %s\n' "${level}" "${message}" >&2
-            ;;
-        *)
-            printf '[%s] %s\n' "${level}" "${message}"
-            ;;
-    esac
+    printf '[%s] %s\n' "${level}" "${message}" >&2
 
     if command -v logger >/dev/null 2>&1; then
         logger -t cachyos-htpc -- "${level}: ${message}" || true

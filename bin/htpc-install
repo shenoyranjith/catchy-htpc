@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Installer. Implements installer-spec.md: converts a fresh CachyOS KDE
+# installation into a Kodi-first HTPC appliance, running as the existing
+# user rather than creating a new one. Safe to rerun.
+#
+# Usage:
+#   sudo bin/htpc-install
+#
+# Must be run via sudo, as the target (existing) user, not directly as
+# root -- the target user is determined from $SUDO_USER.
+
+HTPC_PROJECT_DIR="/opt/cachyos-htpc"
+HTPC_REQUIRED_PACKAGES=(kodi gamescope-session-cachyos lib32-gamescope snapper grub-btrfs inotify-tools)
+
+script_dir() {
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
+
+require_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        echo "This command must be run as root (e.g. via sudo)." >&2
+        exit 1
+    fi
+}
+
+target_user() {
+    : "${SUDO_USER:?Run this via sudo as the target (existing) user, not directly as root, e.g.: sudo bin/htpc-install}"
+    printf '%s\n' "${SUDO_USER}"
+}
+
+confirm() {
+    local prompt="$1" default="${2:-N}" reply
+    local hint="y/N"
+    [[ "${default}" =~ ^[Yy]$ ]] && hint="Y/n"
+
+    read -r -p "${prompt} [${hint}] " reply
+    reply="${reply:-${default}}"
+    [[ "${reply}" =~ ^[Yy]$ ]]
+}
+
+# Copies the project tree to a stable system location and re-execs from
+# there. See "Project Files" in installer-spec.md for why.
+step_bootstrap_project_files() {
+    local self_dir repo_dir item
+
+    self_dir="$(script_dir)"
+    if [[ "${self_dir}" == "${HTPC_PROJECT_DIR}/bin" ]]; then
+        return 0
+    fi
+
+    repo_dir="$(cd "${self_dir}/.." && pwd)"
+    install -d -m 0755 "${HTPC_PROJECT_DIR}"
+    for item in bin lib systemd polkit kodi-addons; do
+        rm -rf "${HTPC_PROJECT_DIR:?}/${item}"
+        cp -a "${repo_dir}/${item}" "${HTPC_PROJECT_DIR}/${item}"
+    done
+    echo "Installed project files to ${HTPC_PROJECT_DIR}."
+
+    exec "${HTPC_PROJECT_DIR}/bin/htpc-install"
+}
+
+source_libs() {
+    local lib_dir="$1"
+    local lib
+    for lib in log backup checks packages btrfs snapshot services kodi display_manager install_record; do
+        # shellcheck disable=SC1090
+        source "${lib_dir}/${lib}.sh"
+    done
+}
+
+# Exposes bin/htpc-recovery (an ongoing user-facing tool, unlike
+# bin/htpc-services which is dev-only) as /usr/local/bin/htpc-recovery via
+# a thin wrapper, matching how htpc-switch is installed. A wrapper rather
+# than a symlink, since bin/htpc-recovery resolves its own lib/ directory
+# relative to $BASH_SOURCE, which a symlink would break.
+step_install_recovery_command() {
+    local dest="/usr/local/bin/htpc-recovery"
+    local target="${HTPC_PROJECT_DIR}/bin/htpc-recovery"
+    local tmp
+
+    tmp="$(mktemp)"
+    {
+        echo "#!/usr/bin/env bash"
+        echo "exec \"${target}\" \"\$@\""
+    } > "${tmp}"
+
+    if [[ -f "${dest}" ]] && cmp -s "${tmp}" "${dest}"; then
+        rm -f "${tmp}"
+        htpc_log_info "htpc-recovery command already installed and up to date."
+        return 0
+    fi
+
+    install -m 0755 "${tmp}" "${dest}"
+    rm -f "${tmp}"
+    htpc_log_info "Installed htpc-recovery command to ${dest}."
+}
+
+step_snapshot() {
+    htpc_snapshot_ensure_tooling
+
+    if ! confirm "Create a Btrfs snapshot before making changes?" Y; then
+        htpc_log_info "Skipping snapshot creation at user's request."
+        return 0
+    fi
+
+    local previous
+    previous="$(htpc_snapshot_find_previous || true)"
+    if [[ -n "${previous}" ]]; then
+        if confirm "A previous installer snapshot (#${previous}) exists. Replace it?" N; then
+            htpc_snapshot_delete "${previous}"
+        else
+            htpc_log_info "Keeping existing snapshot #${previous}; not creating a new one."
+            htpc_install_record_set "INSTALLER_SNAPSHOT_NUMBER" "${previous}"
+            return 0
+        fi
+    fi
+
+    local number
+    if number="$(htpc_snapshot_create)"; then
+        htpc_log_info "Snapshot #${number} created."
+        htpc_install_record_set "INSTALLER_SNAPSHOT_NUMBER" "${number}"
+        return 0
+    fi
+
+    htpc_log_error "Snapshot creation failed."
+    if ! confirm "Continue installation without a snapshot?" N; then
+        htpc_log_error "Aborting installation."
+        exit 1
+    fi
+}
+
+step_verify_installation() {
+    local user="$1" kodi_home ok=0
+    kodi_home="$(htpc_kodi_home "${user}")"
+
+    check() {
+        local description="$1"
+        shift
+        if "$@" >/dev/null 2>&1; then
+            htpc_log_info "OK: ${description}"
+        else
+            htpc_log_error "MISSING: ${description}"
+            ok=1
+        fi
+    }
+
+    check "project files at ${HTPC_PROJECT_DIR}" test -d "${HTPC_PROJECT_DIR}/bin"
+    check "htpc-switch installed" test -x /usr/local/bin/htpc-switch
+    check "htpc-recovery command installed" test -x /usr/local/bin/htpc-recovery
+    check "polkit rule installed" test -f "${HTPC_POLKIT_RULES_DIR}/${HTPC_POLKIT_RULE_NAME}"
+    check "htpc-kodi.service installed" systemctl cat htpc-kodi.service
+    check "htpc-steam.service installed" systemctl cat htpc-steam.service
+    check "htpc-desktop.service installed" systemctl cat htpc-desktop.service
+    check "htpc-kodi.service enabled" systemctl is-enabled --quiet htpc-kodi.service
+    check "steamos-session-select replaced" cmp -s "${HTPC_PROJECT_DIR}/bin/htpc-steamos-session-select" "${HTPC_STEAMOS_SESSION_SELECT_PATH}"
+    check "Steam Gaming Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.steam/addon.xml"
+    check "Desktop Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.desktop/addon.xml"
+    check "favourites seeded" grep -q "script.htpc.steam" "${kodi_home}/userdata/favourites.xml"
+    check "installation record present" htpc_install_record_exists
+
+    return "${ok}"
+}
+
+main() {
+    require_root
+    step_bootstrap_project_files
+
+    source_libs "${HTPC_PROJECT_DIR}/lib"
+
+    local user
+    user="$(target_user)"
+    htpc_log_info "Target user: ${user}"
+
+    htpc_verify_cachyos
+    htpc_verify_btrfs
+
+    # Captured before anything is installed (including by step_snapshot,
+    # which ensures snapper/grub-btrfs/inotify-tools itself before the
+    # dedicated package-install step below), so this reflects only
+    # packages truly added by this run. See installer-spec.md.
+    local missing_packages
+    missing_packages="$(htpc_packages_missing "${HTPC_REQUIRED_PACKAGES[@]}")"
+
+    step_snapshot
+
+    htpc_log_info "Updating packages."
+    pacman -Syu --noconfirm
+
+    htpc_packages_install "${HTPC_REQUIRED_PACKAGES[@]}"
+
+    step_install_recovery_command
+
+    htpc_switch_install
+    htpc_polkit_rule_install "${user}"
+    htpc_service_install "htpc-kodi.service" "${user}"
+    htpc_service_install "htpc-steam.service" "${user}"
+    htpc_service_install "htpc-desktop.service" "${user}"
+    htpc_user_unit_mask "cachyos-gamescope-autologin.service" "${user}"
+    htpc_steamos_session_select_install
+    htpc_display_manager_disable_and_record
+
+    htpc_kodi_addons_install "${user}"
+    htpc_kodi_favourites_seed "${user}"
+
+    systemctl enable htpc-kodi.service
+
+    htpc_install_record_set "TARGET_USER" "${user}"
+    # shellcheck disable=SC2086 # intentional word-splitting of a newline-separated list
+    htpc_install_record_append_unique "INSTALLED_PACKAGES" ${missing_packages}
+
+    htpc_log_info "Verifying installation."
+    if step_verify_installation "${user}"; then
+        htpc_log_info "Installation verified successfully."
+    else
+        htpc_log_error "Some checks failed; review the errors above before rebooting."
+    fi
+
+    if confirm "Reboot now to complete setup?" N; then
+        systemctl reboot
+    else
+        htpc_log_info "Reboot later to boot into Kodi."
+    fi
+}
+
+main "$@"

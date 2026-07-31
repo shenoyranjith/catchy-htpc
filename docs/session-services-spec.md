@@ -49,5 +49,5 @@ These are system-level systemd units. No display manager is used to start them o
 
 ## Display Manager
 
-- SDDM is disabled and masked during install.
-- Its prior enabled/disabled state is recorded so the uninstaller can restore it.
+- Whichever display manager is configured (discovered via the display-manager.service alias at install time, not hardcoded to any specific one) is disabled and masked during install.
+- Its unit name and prior enabled/disabled state are recorded so the uninstaller can restore it.

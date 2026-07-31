@@ -22,4 +22,9 @@ detached process that outlives the caller (see session-manager-spec.md), so
 synchronous result, not to anything that might go wrong after the switch is
 already underway.
 
-Add-on discoverability (installation into the addons directory, menu placement, favourites) is handled by the installer, not by the add-ons themselves. See installer-spec.md.
+Add-on discoverability (installation into the addons directory, menu placement, favourites) is handled by the installer, not by the add-ons themselves. See installer-spec.md. In practice this means favourites.xml only: the default Estuary skin's home menu already includes a Favourites entry, and editing a specific skin's home menu directly would be fragile and skin-version-dependent, which would work against "makes no assumptions about the active Kodi skin" above.
+
+## Implementation
+
+- Add-on IDs: script.htpc.steam (Steam Gaming Mode), script.htpc.desktop (Desktop Mode). Standard Kodi Program Add-on layout (addon.xml + default.py), xbmc.python.script extension point.
+- default.py runs htpc-switch via subprocess.run, capturing stderr/stdout. On a non-zero exit, shows the captured message via xbmcgui.Dialog().notification(); on success, does nothing (Kodi is about to lose DRM master to the new session anyway).

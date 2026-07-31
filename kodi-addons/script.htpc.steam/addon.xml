@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="script.htpc.steam" name="Steam Gaming Mode" version="1.0.0" provider-name="CachyOS HTPC">
+    <requires>
+        <import addon="xbmc.python" version="3.0.1"/>
+    </requires>
+    <extension point="xbmc.python.script" library="default.py">
+        <provides>executable</provides>
+    </extension>
+    <extension point="xbmc.addon.metadata">
+        <summary lang="en_GB">Switch to Steam Gaming Mode</summary>
+        <description lang="en_GB">Switches from Kodi to Steam Gaming Mode via htpc-switch. Part of CachyOS HTPC.</description>
+        <platform>linux</platform>
+    </extension>
+</addon>
