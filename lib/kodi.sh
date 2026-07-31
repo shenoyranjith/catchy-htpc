@@ -51,9 +51,24 @@ htpc_kodi_addons_install() {
     done
 }
 
-# Seeds favourites.xml with entries launching both add-ons, preserving any
-# existing favourites. Idempotent: never duplicates entries it already
-# added on a prior run.
+# Seeds favourites.xml with session-switch add-ons and disc built-ins,
+# preserving any existing favourites. Idempotent: updates same-named
+# entries in place and never duplicates. Play Disc / Eject Tray use
+# Kodi's own PlayDVD and EjectTray() built-ins so they remain available
+# under skins that hide the default disc controls.
+#
+# Both are called with a harmless dummy parameter ("(1)") rather than bare
+# (PlayDVD) or empty parens (EjectTray()). This isn't cosmetic: Kodi's
+# favourites loader (CFavouritesURL::Parse, favourites/FavouritesURL.cpp)
+# rejects any non-whitelisted built-in (i.e. anything other than
+# ActivateWindow/PlayMedia/RunScript/RunAddon/etc.) that has zero
+# parameters, resolving it to an empty target path instead of erroring.
+# Confirmed live: this silently made "Play Disc" show up but do nothing
+# (empty path), and made "Eject Tray" not show up at all, since Kodi
+# de-duplicates favourites by resolved path and it collided with Play
+# Disc's empty one. Both built-ins ignore unrecognized params (EjectTray
+# takes none; PlayDVD only special-cases "restart"), so the dummy value is
+# safe and keeps the params list non-empty.
 htpc_kodi_favourites_seed() {
     local target_user="$1"
     local kodi_home favourites_path script
@@ -67,7 +82,9 @@ htpc_kodi_favourites_seed() {
 
     if ! python3 "${script}" "${favourites_path}" \
         "Steam Gaming Mode=RunScript(script.htpc.steam)" \
-        "Desktop Mode=RunScript(script.htpc.desktop)"; then
+        "Desktop Mode=RunScript(script.htpc.desktop)" \
+        "Play Disc=PlayDVD(1)" \
+        "Eject Tray=EjectTray(1)"; then
         htpc_log_error "Failed to seed Kodi favourites at ${favourites_path}."
         return 1
     fi

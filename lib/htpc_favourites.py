@@ -2,16 +2,19 @@
 """Idempotently merges entries into a Kodi favourites.xml file.
 
 Used by the installer to seed shortcuts for the Steam Gaming Mode and
-Desktop Mode Program add-ons without disturbing any favourites the user
-already has. See installer-spec.md.
+Desktop Mode Program add-ons, plus Kodi built-ins like PlayDVD /
+EjectTray(), without disturbing any favourites the user already has.
+See installer-spec.md and kodi-addon-spec.md.
 
 Usage:
-    htpc_favourites.py <favourites.xml path> <name>=<RunScript command> ...
+    htpc_favourites.py <favourites.xml path> <name>=<command> ...
 
 Example:
     htpc_favourites.py /home/user/.kodi/userdata/favourites.xml \\
         "Steam Gaming Mode"=RunScript(script.htpc.steam) \\
-        "Desktop Mode"=RunScript(script.htpc.desktop)
+        "Desktop Mode"=RunScript(script.htpc.desktop) \\
+        "Play Disc"=PlayDVD(1) \\
+        "Eject Tray"=EjectTray(1)
 
 Exits non-zero (without modifying the file) if it exists but is not
 parseable as XML, so a corrupt favourites.xml is never silently clobbered.
@@ -46,19 +49,39 @@ def load_favourites(path: Path) -> ET.Element:
     return root
 
 
-def has_command(root: ET.Element, command: str) -> bool:
-    return any(elem.text == command for elem in root.findall("favourite"))
-
-
 def merge_entries(root: ET.Element, entries: list[tuple[str, str]]) -> int:
-    added = 0
+    """Add or update favourites. Matches by name first so a renamed
+    built-in command (e.g. PlayDisc -> PlayDVD) updates in place instead
+    of leaving a stale entry and adding a duplicate label. Also collapses
+    any leftover duplicates for the same name -- e.g. from an older,
+    buggy version of this script -- down to one, self-healing on rerun.
+
+    Deliberately uses list comprehensions rather than `elem or other_elem`
+    for the "did we find one" check: an ElementTree Element with no child
+    elements (true of every <favourite>, which only has text) is falsy,
+    so that pattern silently discards a real match.
+    """
+    changed = 0
     for name, command in entries:
-        if has_command(root, command):
+        matches = [elem for elem in root.findall("favourite") if elem.get("name") == name]
+        if not matches:
+            matches = [elem for elem in root.findall("favourite") if elem.text == command]
+
+        if matches:
+            keep, *duplicates = matches
+            for duplicate in duplicates:
+                root.remove(duplicate)
+                changed += 1
+            if keep.get("name") != name or keep.text != command:
+                keep.set("name", name)
+                keep.text = command
+                changed += 1
             continue
+
         favourite = ET.SubElement(root, "favourite", {"name": name})
         favourite.text = command
-        added += 1
-    return added
+        changed += 1
+    return changed
 
 
 def write_favourites(root: ET.Element, path: Path) -> None:
@@ -85,7 +108,7 @@ def main(argv: list[str]) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Added {added} new favourite(s) to {path}.")
+    print(f"Updated {added} favourite(s) in {path}.")
     return 0
 
 

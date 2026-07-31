@@ -86,7 +86,11 @@ Package sourcing prefers official CachyOS/Arch repositories, but AUR or other so
 ## Kodi Add-on Installation
 
 - Install the Steam Gaming Mode and Desktop Mode Program add-ons directly into the target user's Kodi addons directory.
-- Seed or merge the target user's favourites.xml with entries that launch both add-ons, preserving any existing favourites.
+- Seed or merge the target user's favourites.xml with entries that launch
+  both add-ons, plus Play Disc (`PlayDVD(1)`) and Eject Tray (`EjectTray(1)`)
+  built-ins so disc controls remain available under skins that hide them,
+  preserving any existing favourites. See kodi-addon-spec.md for why these
+  built-ins are seeded with a dummy parameter.
 - Install the desktop application-launcher shortcuts (htpc-kodi.desktop, htpc-steam.desktop) into the target user's ~/.local/share/applications/, so KDE Desktop also has a way back into htpc-switch. See "Desktop Application Shortcuts" in session-services-spec.md.
 
 ## Boot Configuration
