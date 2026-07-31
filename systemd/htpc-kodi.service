@@ -6,6 +6,12 @@ Conflicts=getty@tty1.service htpc-steam.service htpc-desktop.service
 [Service]
 Type=simple
 User=__HTPC_USER__
+# Kodi's GBM windowing opens /dev/input/event* directly via libinput rather
+# than acquiring them through logind's D-Bus device hand-off (the mechanism
+# KDE/gamescope use), so it needs real group access to read them. Granted
+# here rather than via a persistent usermod so it only applies to this
+# session and is fully reverted by removing this unit.
+SupplementaryGroups=input render
 PAMName=login
 TTYPath=/dev/tty1
 TTYReset=yes
