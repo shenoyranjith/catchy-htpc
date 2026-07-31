@@ -52,7 +52,7 @@ step_bootstrap_project_files() {
 
     repo_dir="$(cd "${self_dir}/.." && pwd)"
     install -d -m 0755 "${HTPC_PROJECT_DIR}"
-    for item in bin lib systemd polkit kodi-addons desktop-shortcuts; do
+    for item in bin lib systemd polkit kodi-addons desktop-shortcuts vendor; do
         rm -rf "${HTPC_PROJECT_DIR:?}/${item}"
         cp -a "${repo_dir}/${item}" "${HTPC_PROJECT_DIR}/${item}"
     done
@@ -223,6 +223,10 @@ main() {
         htpc_log_info "Installation verified successfully."
     else
         htpc_log_error "Some checks failed; review the errors above before rebooting."
+    fi
+
+    if confirm "Also set up MakeMKV for Blu-ray/UHD Blu-ray disc playback in Kodi? This builds MakeMKV from source and requires accepting its EULA." N; then
+        "${HTPC_PROJECT_DIR}/bin/htpc-makemkv-setup" || htpc_log_error "MakeMKV setup did not complete successfully; you can retry later with: ${HTPC_PROJECT_DIR}/bin/htpc-makemkv-setup"
     fi
 
     if confirm "Reboot now to complete setup?" N; then

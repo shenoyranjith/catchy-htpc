@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Optional add-on: builds and installs MakeMKV from source so Kodi's
+# built-in disc player can decrypt and play Blu-ray/UHD Blu-ray discs, and
+# ensures the `sg` kernel module (needed for MakeMKV to see the optical
+# drive) is loaded. See makemkv-spec.md.
+#
+# Not part of the core htpc-install flow: run this separately, or opt in
+# when prompted at the end of htpc-install. Safe to rerun.
+#
+# Usage:
+#   sudo bin/htpc-makemkv-setup
+
+HTPC_MAKEMKV_VERSION="1.18.4"
+# The official makemkv.com download domain is down at the time of writing,
+# so both source tarballs are vendored directly in this repo (vendor/makemkv/)
+# rather than fetched at install time -- this project's own dependency on
+# MakeMKV shouldn't also depend on a third-party mirror's continued
+# uptime. Both tarballs are redistributed unmodified, which their licenses
+# explicitly permit: makemkv-oss under GPL/LGPL, and makemkv-bin under its
+# own EULA (vendor/makemkv/eula_en_linux.txt), which states "You are
+# allowed to redistribute the Software in its original unmodified form."
+# Their checksums were verified to match the ones in Arch's official
+# "makemkv" AUR package for the same version. If bumping
+# HTPC_MAKEMKV_VERSION, re-verify both the new tarballs and their
+# checksums against the current AUR PKGBUILD
+# (https://aur.archlinux.org/packages/makemkv) before replacing the
+# vendored files.
+HTPC_MAKEMKV_OSS_SHA256="8590063648d42ec2a958b74573d7022f0f4c334e4e4fe7dd53b70c6e748ba453"
+HTPC_MAKEMKV_BIN_SHA256="cee56de0baa5531abed16bd862742d308d772b4ab4dae16ee865bf74f04a1608"
+HTPC_MAKEMKV_BUILD_PACKAGES=(gcc make pkgconf qt5-base ffmpeg openssl zlib expat)
+# libbdplus is AUR-only and not needed for the MakeMKV path: MakeMKV's
+# own decryption engine covers BD+ (and AACS), which is why this project
+# builds MakeMKV rather than relying on the open-source BD+ library.
+HTPC_MAKEMKV_RUNTIME_PACKAGES=(libbluray libaacs)
+
+script_dir() {
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
+
+require_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        htpc_log_error "This command must be run as root (e.g. via sudo)."
+        exit 1
+    fi
+}
+
+confirm() {
+    local prompt="$1" default="${2:-N}" reply
+    local hint="y/N"
+    [[ "${default}" =~ ^[Yy]$ ]] && hint="Y/n"
+
+    read -r -p "${prompt} [${hint}] " reply
+    reply="${reply:-${default}}"
+    [[ "${reply}" =~ ^[Yy]$ ]]
+}
+
+htpc_makemkv_installed() {
+    command -v makemkvcon >/dev/null 2>&1 && command -v makemkv >/dev/null 2>&1
+}
+
+htpc_makemkv_vendor_dir() {
+    cd "$(dirname "${BASH_SOURCE[0]}")/../vendor/makemkv" && pwd
+}
+
+# Verifies and extracts a vendored tarball (see vendor/makemkv/ and the
+# provenance note above) into dest_dir.
+htpc_makemkv_extract() {
+    local name="$1" expected_sha="$2" dest_dir="$3"
+    local vendor_dir archive actual_sha
+
+    vendor_dir="$(htpc_makemkv_vendor_dir)"
+    archive="${vendor_dir}/${name}.tar.gz"
+
+    if [[ ! -f "${archive}" ]]; then
+        htpc_log_error "Vendored source not found: ${archive}"
+        return 1
+    fi
+
+    actual_sha="$(sha256sum "${archive}" | awk '{print $1}')"
+    if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+        htpc_log_error "Checksum mismatch for ${name}.tar.gz: expected ${expected_sha}, got ${actual_sha}."
+        return 1
+    fi
+
+    tar -xzf "${archive}" -C "${dest_dir}"
+}
+
+# Extracts and builds both vendored MakeMKV components. Asks for explicit
+# EULA acceptance (covering the proprietary makemkv-bin component) before
+# installing anything.
+htpc_makemkv_build() {
+    local build_dir oss_name bin_name eula_path
+    build_dir="$(mktemp -d)"
+    # shellcheck disable=SC2064 # intentional: expand ${build_dir} now, not at trap time
+    trap "trap - RETURN; rm -rf '${build_dir}'" RETURN
+
+    oss_name="makemkv-oss-${HTPC_MAKEMKV_VERSION}"
+    bin_name="makemkv-bin-${HTPC_MAKEMKV_VERSION}"
+
+    htpc_makemkv_extract "${oss_name}" "${HTPC_MAKEMKV_OSS_SHA256}" "${build_dir}"
+    htpc_makemkv_extract "${bin_name}" "${HTPC_MAKEMKV_BIN_SHA256}" "${build_dir}"
+
+    eula_path="$(htpc_makemkv_vendor_dir)/eula_en_linux.txt"
+    htpc_log_info "makemkv-bin is proprietary, covered by GuinpinSoft's MakeMKV EULA."
+    [[ -f "${eula_path}" ]] && htpc_log_info "Full text: ${eula_path}"
+    if ! confirm "Accept the MakeMKV EULA and proceed with building and installing MakeMKV?" N; then
+        htpc_log_warn "Declined; MakeMKV was not installed."
+        return 1
+    fi
+
+    htpc_log_info "Building makemkv-oss ${HTPC_MAKEMKV_VERSION}."
+    (
+        cd "${build_dir}/${oss_name}"
+        ./configure --prefix=/usr
+        make -j"$(nproc)"
+        make install
+    )
+
+    htpc_log_info "Installing makemkv-bin ${HTPC_MAKEMKV_VERSION}."
+    (
+        cd "${build_dir}/${bin_name}"
+        install -d tmp
+        echo accepted > tmp/eula_accepted
+        make install
+    )
+
+    if [[ -f "${eula_path}" ]]; then
+        install -Dm 644 "${eula_path}" /usr/share/licenses/makemkv/eula_en_linux.txt
+    fi
+    htpc_log_info "MakeMKV ${HTPC_MAKEMKV_VERSION} installed."
+}
+
+# MakeMKV talks to the optical drive over /dev/sg* (SCSI generic), which
+# needs the `sg` module. Loaded immediately and persisted for future boots.
+htpc_makemkv_load_sg_module() {
+    local conf="/etc/modules-load.d/sg.conf"
+
+    if [[ -f "${conf}" ]] && grep -qx "sg" "${conf}"; then
+        htpc_log_info "sg module already configured to load at boot."
+    else
+        install -d -m 0755 "$(dirname "${conf}")"
+        printf 'sg\n' > "${conf}"
+        htpc_log_info "Configured sg module to load at boot (${conf})."
+    fi
+
+    if lsmod | grep -q '^sg '; then
+        htpc_log_info "sg module already loaded."
+    else
+        modprobe sg
+        htpc_log_info "Loaded sg module."
+    fi
+}
+
+target_user() {
+    : "${SUDO_USER:?Run this via sudo as the target (existing) user, not directly as root, e.g.: sudo bin/htpc-makemkv-setup}"
+    printf '%s\n' "${SUDO_USER}"
+}
+
+# True when an optical drive reports media present. Size 0 means empty.
+htpc_makemkv_disc_present() {
+    local device size
+    for device in /dev/sr0 /dev/sr1 /dev/cdrom; do
+        [[ -b "${device}" ]] || continue
+        size="$(blockdev --getsize64 "${device}" 2>/dev/null || echo 0)"
+        if [[ "${size}" -gt 0 ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Registration fails (or appears to fail) with a disc in the drive -- found
+# during live testing. Wait until the tray is empty before writing the key.
+htpc_makemkv_ensure_drive_empty() {
+    if ! htpc_makemkv_disc_present; then
+        return 0
+    fi
+
+    htpc_log_warn "An optical disc is currently in the drive."
+    htpc_log_warn "MakeMKV registration fails while a disc is loaded; eject it before continuing."
+
+    if command -v eject >/dev/null 2>&1; then
+        if confirm "Eject the disc now?" Y; then
+            eject /dev/sr0 2>/dev/null || eject 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+
+    while htpc_makemkv_disc_present; do
+        read -r -p "Disc still present. Eject it, then press Enter to retry (or Ctrl-C to abort)... "
+    done
+    htpc_log_info "Drive is empty; proceeding with registration."
+}
+
+# Writes app_Key into the target user's ~/.MakeMKV/settings.conf. Preferable
+# to `makemkvcon reg`, which is unreliable on Linux (often reports "Key not
+# found or invalid" even for a valid key). Idempotent: replaces any existing
+# app_Key line rather than appending a duplicate.
+htpc_makemkv_register() {
+    local user="$1" key="$2"
+    local home conf_dir conf tmp
+
+    home="$(getent passwd "${user}" | cut -d: -f6)"
+    if [[ -z "${home}" ]]; then
+        htpc_log_error "Could not determine home directory for user ${user}."
+        return 1
+    fi
+
+    # Strip whitespace / trailing CR that paste often introduces; those make
+    # an otherwise-valid key look invalid.
+    key="$(printf '%s' "${key}" | tr -d '[:space:]')"
+    if [[ -z "${key}" ]]; then
+        htpc_log_error "Registration key is empty."
+        return 1
+    fi
+
+    htpc_makemkv_ensure_drive_empty
+
+    conf_dir="${home}/.MakeMKV"
+    conf="${conf_dir}/settings.conf"
+    install -d -o "${user}" -g "${user}" -m 0700 "${conf_dir}"
+
+    tmp="$(mktemp)"
+    if [[ -f "${conf}" ]]; then
+        grep -v '^app_Key[[:space:]]*=' "${conf}" > "${tmp}" || true
+    else
+        : > "${tmp}"
+    fi
+    printf 'app_Key = "%s"\n' "${key}" >> "${tmp}"
+    install -o "${user}" -g "${user}" -m 0600 "${tmp}" "${conf}"
+    rm -f "${tmp}"
+
+    htpc_log_info "Wrote MakeMKV registration key to ${conf}."
+}
+
+htpc_makemkv_key_registered() {
+    local user="$1" home conf
+    home="$(getent passwd "${user}" | cut -d: -f6)"
+    conf="${home}/.MakeMKV/settings.conf"
+    [[ -f "${conf}" ]] && grep -q '^app_Key[[:space:]]*=' "${conf}"
+}
+
+step_register() {
+    local user="$1" key=""
+
+    if [[ -n "${HTPC_MAKEMKV_KEY:-}" ]]; then
+        key="${HTPC_MAKEMKV_KEY}"
+        htpc_log_info "Using registration key from HTPC_MAKEMKV_KEY."
+    else
+        if htpc_makemkv_key_registered "${user}"; then
+            if ! confirm "A MakeMKV registration key is already present for ${user}. Replace it?" N; then
+                htpc_log_info "Keeping existing MakeMKV registration key."
+                return 0
+            fi
+        fi
+        htpc_log_info "MakeMKV needs a registration key (paid key, or the free beta key from the MakeMKV forum) for disc decryption to work with Kodi."
+        read -r -p "Paste the MakeMKV registration key (or leave blank to skip): " key
+        if [[ -z "${key}" ]]; then
+            htpc_log_warn "Skipping registration. Disc decryption will not work until a key is set."
+            htpc_log_warn "Re-run this script later, or set HTPC_MAKEMKV_KEY and re-run."
+            return 0
+        fi
+    fi
+
+    htpc_makemkv_register "${user}" "${key}"
+}
+
+step_verify() {
+    local user="$1" ok=0
+
+    check() {
+        local description="$1"
+        shift
+        if "$@" >/dev/null 2>&1; then
+            htpc_log_info "OK: ${description}"
+        else
+            htpc_log_error "MISSING: ${description}"
+            ok=1
+        fi
+    }
+
+    check "makemkvcon installed" command -v makemkvcon
+    check "makemkv installed" command -v makemkv
+    check "libbluray installed" htpc_package_installed libbluray
+    check "libaacs installed" htpc_package_installed libaacs
+    check "sg module configured to load at boot" grep -qx "sg" /etc/modules-load.d/sg.conf
+    check "sg module loaded" bash -c "lsmod | grep -q '^sg '"
+    check "MakeMKV registration key present for ${user}" htpc_makemkv_key_registered "${user}"
+
+    return "${ok}"
+}
+
+main() {
+    require_root
+
+    local lib_dir
+    lib_dir="$(script_dir)/../lib"
+    # shellcheck source=../lib/log.sh
+    source "${lib_dir}/log.sh"
+    # shellcheck source=../lib/packages.sh
+    source "${lib_dir}/packages.sh"
+
+    local user
+    user="$(target_user)"
+    htpc_log_info "Target user: ${user}"
+
+    if htpc_makemkv_installed; then
+        htpc_log_info "makemkv already installed; skipping build. Remove /usr/bin/makemkvcon and /usr/bin/makemkv to force a rebuild."
+    else
+        htpc_packages_install "${HTPC_MAKEMKV_BUILD_PACKAGES[@]}"
+        htpc_makemkv_build || true
+    fi
+
+    if ! htpc_makemkv_installed; then
+        htpc_log_error "MakeMKV is not installed; cannot continue with registration."
+        exit 1
+    fi
+
+    htpc_packages_install "${HTPC_MAKEMKV_RUNTIME_PACKAGES[@]}"
+    htpc_makemkv_load_sg_module
+    step_register "${user}"
+
+    htpc_log_info "Verifying installation."
+    if step_verify "${user}"; then
+        htpc_log_info "MakeMKV setup verified successfully. Insert a Blu-ray/UHD disc and use Kodi's normal disc playback."
+    else
+        htpc_log_error "Some checks failed; review the errors above."
+    fi
+}
+
+main "$@"
