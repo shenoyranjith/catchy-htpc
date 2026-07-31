@@ -67,3 +67,24 @@ htpc_desktop_shortcuts_install() {
 
     htpc_log_info "Installed desktop shortcuts (launcher + Desktop icons) for ${target_user}."
 }
+
+# Reverses htpc_desktop_shortcuts_install.
+htpc_desktop_shortcuts_remove() {
+    local target_user="$1"
+    local home apps_dir desktop_dir name
+
+    home="$(getent passwd "${target_user}" | cut -d: -f6)"
+    if [[ -z "${home}" ]]; then
+        htpc_log_error "Could not determine home directory for user ${target_user}."
+        return 1
+    fi
+
+    apps_dir="${home}/.local/share/applications"
+    desktop_dir="$(htpc_desktop_shortcuts_desktop_dir "${target_user}" "${home}")"
+
+    for name in "${HTPC_DESKTOP_SHORTCUTS[@]}"; do
+        rm -f "${apps_dir}/${name}" "${desktop_dir}/${name}"
+    done
+
+    htpc_log_info "Removed desktop shortcuts (launcher + Desktop icons) for ${target_user}."
+}

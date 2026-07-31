@@ -59,6 +59,24 @@ htpc_service_install() {
     htpc_log_info "Installed ${name} for user ${target_user}."
 }
 
+# Reverses htpc_service_install: stops (if running), disables, and removes
+# a previously installed htpc-*.service unit file. Idempotent: a no-op if
+# the unit was never installed.
+htpc_service_uninstall() {
+    local name="$1"
+    local dest="${HTPC_SYSTEMD_DIR}/${name}"
+
+    if [[ ! -f "${dest}" ]]; then
+        htpc_log_info "${name} not installed; nothing to remove."
+        return 0
+    fi
+
+    systemctl disable --now "${name}" 2>/dev/null || true
+    rm -f "${dest}"
+    systemctl daemon-reload
+    htpc_log_info "Removed ${name}."
+}
+
 # Masks a systemd --user unit for a target user by symlinking it to
 # /dev/null under that user's own systemd user config directory. This
 # works without needing an active session for the user (unlike
@@ -88,6 +106,30 @@ htpc_user_unit_mask() {
     htpc_log_info "Masked ${unit} for user ${target_user}."
 }
 
+# Reverses htpc_user_unit_mask: removes the /dev/null mask symlink for the
+# given systemd --user unit, if present. Only removes it if it is still
+# exactly the mask this project created, so it never clobbers something
+# else. Idempotent.
+htpc_user_unit_unmask() {
+    local unit="$1" target_user="$2"
+    local home mask_path
+
+    home="$(getent passwd "${target_user}" | cut -d: -f6)"
+    if [[ -z "${home}" ]]; then
+        htpc_log_error "Could not determine home directory for user ${target_user}."
+        return 1
+    fi
+
+    mask_path="${home}/.config/systemd/user/${unit}"
+
+    if [[ -L "${mask_path}" ]] && [[ "$(readlink "${mask_path}")" == "/dev/null" ]]; then
+        rm -f "${mask_path}"
+        htpc_log_info "Unmasked ${unit} for ${target_user}."
+    else
+        htpc_log_info "${unit} was not masked for ${target_user}; nothing to unmask."
+    fi
+}
+
 # Installs bin/htpc-switch to /usr/local/bin so it's on PATH for Kodi
 # add-ons, the replaced steamos-session-select wrapper, and manual use.
 # Idempotent.
@@ -109,6 +151,16 @@ htpc_switch_install() {
 
     install -m 0755 "${script}" "${dest}"
     htpc_log_info "Installed htpc-switch to ${dest}."
+}
+
+# Reverses htpc_switch_install.
+htpc_switch_uninstall() {
+    local dest="${HTPC_BIN_DIR}/htpc-switch"
+
+    if [[ -f "${dest}" ]]; then
+        rm -f "${dest}"
+        htpc_log_info "Removed ${dest}."
+    fi
 }
 
 # Installs a polkit rule granting the target user passwordless start/stop/
@@ -139,6 +191,16 @@ htpc_polkit_rule_install() {
     install -m 0644 "${tmp}" "${dest}"
     rm -f "${tmp}"
     htpc_log_info "Installed polkit rule for user ${target_user} at ${dest}."
+}
+
+# Reverses htpc_polkit_rule_install.
+htpc_polkit_rule_uninstall() {
+    local dest="${HTPC_POLKIT_RULES_DIR}/${HTPC_POLKIT_RULE_NAME}"
+
+    if [[ -f "${dest}" ]]; then
+        rm -f "${dest}"
+        htpc_log_info "Removed polkit rule ${dest}."
+    fi
 }
 
 # Replaces gamescope-session-cachyos's steamos-session-select with a thin
@@ -172,6 +234,22 @@ htpc_steamos_session_select_install() {
     htpc_backup_file "${dest}"
     install -m 0755 "${script}" "${dest}"
     htpc_log_info "Replaced ${dest} with the htpc-switch wrapper."
+}
+
+# Reverses htpc_steamos_session_select_install: restores the original
+# script from the .htpc-backup copy made before replacing it (see
+# htpc_backup_file), if one is present. Idempotent.
+htpc_steamos_session_select_restore() {
+    local dest="${HTPC_STEAMOS_SESSION_SELECT_PATH}"
+    local backup="${dest}.htpc-backup"
+
+    if [[ ! -f "${backup}" ]]; then
+        htpc_log_info "No backup found for ${dest}; leaving it as-is (may not have been replaced, or was already restored)."
+        return 0
+    fi
+
+    mv -f "${backup}" "${dest}"
+    htpc_log_info "Restored original ${dest} from backup."
 }
 
 # Installs a systemd environment.d drop-in disabling the AT-SPI
@@ -216,6 +294,27 @@ htpc_environment_no_at_bridge_install() {
         htpc_log_info "Reloaded ${target_user}'s systemd --user environment."
     else
         htpc_log_warn "Could not reload ${target_user}'s systemd --user manager (no active session?); it will pick up NO_AT_BRIDGE on next login instead."
+    fi
+}
+
+# Reverses htpc_environment_no_at_bridge_install.
+htpc_environment_no_at_bridge_uninstall() {
+    local target_user="$1"
+
+    if [[ ! -f "${HTPC_ENVIRONMENT_D_PATH}" ]]; then
+        htpc_log_info "${HTPC_ENVIRONMENT_D_PATH} not present; nothing to remove."
+        return 0
+    fi
+
+    rm -f "${HTPC_ENVIRONMENT_D_PATH}"
+    htpc_log_info "Removed ${HTPC_ENVIRONMENT_D_PATH}."
+
+    local uid
+    uid="$(id -u "${target_user}" 2>/dev/null)" || uid=""
+    if [[ -n "${uid}" ]] && runuser -u "${target_user}" -- env "XDG_RUNTIME_DIR=/run/user/${uid}" systemctl --user daemon-reload 2>/dev/null; then
+        htpc_log_info "Reloaded ${target_user}'s systemd --user environment."
+    else
+        htpc_log_warn "Could not reload ${target_user}'s systemd --user manager (no active session?); NO_AT_BRIDGE will remain set until next login."
     fi
 }
 

@@ -39,7 +39,7 @@ KDE Desktop is the maintenance and recovery workspace. See
 ### Specifications
 
 - [Installer Specification](installer-spec.md)
-- [Uninstaller Specification](uninstaller-spec.md) (not yet implemented)
+- [Uninstaller Specification](uninstaller-spec.md)
 - [Recovery Specification](recovery-spec.md)
 - [Session Manager Specification](session-manager-spec.md) (`htpc-switch`)
 - [Session Services Specification](session-services-spec.md) (systemd units for Kodi/Steam/Desktop)

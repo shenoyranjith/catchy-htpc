@@ -59,3 +59,17 @@ htpc_install_record_append_unique() {
 
     htpc_install_record_set "${key}" "${combined}"
 }
+
+# Removes the install record file entirely, and its parent directory too
+# if that's now empty. Called at the end of uninstallation, once every
+# value that needs to be read from it (target user, recorded packages,
+# etc.) has already been captured.
+htpc_install_record_remove() {
+    local record="${HTPC_INSTALL_RECORD_PATH}" dir
+
+    dir="$(dirname "${record}")"
+    rm -f "${record}"
+    rmdir "${dir}" 2>/dev/null || true
+
+    htpc_log_info "Removed installation record."
+}

@@ -16,10 +16,9 @@ KDE Desktop is the maintenance and recovery workspace.
 
 ## Status
 
-Phase 1 (installer, session switching between all three workspaces,
-recovery) and the optional MakeMKV/Blu-ray add-on are complete and tested
-end-to-end. The uninstaller is not yet implemented. See
-[docs/roadmap.md](docs/roadmap.md) for details.
+Phase 1 (installer, uninstaller, session switching between all three
+workspaces, recovery) and the optional MakeMKV/Blu-ray add-on are
+complete. See [docs/roadmap.md](docs/roadmap.md) for details.
 
 ## Quick Start
 
@@ -35,6 +34,17 @@ snapshot before making any changes. See
 [docs/installer-spec.md](docs/installer-spec.md) for exactly what it
 does, and [docs/recovery-spec.md](docs/recovery-spec.md) for how to roll
 back if something goes wrong.
+
+To reverse the installation and return to a stock CachyOS KDE desktop
+login:
+
+```
+sudo bin/htpc-uninstall
+```
+
+See [docs/uninstaller-spec.md](docs/uninstaller-spec.md) for exactly what
+it removes (and what it deliberately leaves alone, like your Kodi/Steam
+libraries).
 
 ## Documentation
 

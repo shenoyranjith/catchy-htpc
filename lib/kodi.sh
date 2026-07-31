@@ -92,3 +92,48 @@ htpc_kodi_favourites_seed() {
     chown "${target_user}:${target_user}" "${favourites_path}"
     htpc_log_info "Seeded Kodi favourites for ${target_user}."
 }
+
+# Reverses htpc_kodi_addons_install.
+htpc_kodi_addons_remove() {
+    local target_user="$1"
+    local kodi_home addons_dir name
+
+    kodi_home="$(htpc_kodi_home "${target_user}")" || return 1
+    addons_dir="${kodi_home}/addons"
+
+    for name in "${HTPC_KODI_ADDONS[@]}"; do
+        if [[ -d "${addons_dir}/${name}" ]]; then
+            rm -rf "${addons_dir:?}/${name}"
+            htpc_log_info "Removed Kodi add-on ${name} for ${target_user}."
+        fi
+    done
+}
+
+# Reverses htpc_kodi_favourites_seed: removes only the favourite entries
+# this project seeds, by name, preserving anything else the target user
+# has in favourites.xml. A no-op if favourites.xml doesn't exist.
+htpc_kodi_favourites_remove() {
+    local target_user="$1"
+    local kodi_home favourites_path script
+
+    kodi_home="$(htpc_kodi_home "${target_user}")" || return 1
+    favourites_path="${kodi_home}/userdata/favourites.xml"
+    script="$(htpc_favourites_script_path)"
+
+    if [[ ! -f "${favourites_path}" ]]; then
+        htpc_log_info "No favourites.xml found for ${target_user}; nothing to remove."
+        return 0
+    fi
+
+    if ! python3 "${script}" --remove "${favourites_path}" \
+        "Steam Gaming Mode" \
+        "Desktop Mode" \
+        "Play Disc" \
+        "Eject Tray"; then
+        htpc_log_error "Failed to remove seeded favourites from ${favourites_path}."
+        return 1
+    fi
+
+    chown "${target_user}:${target_user}" "${favourites_path}"
+    htpc_log_info "Removed seeded Kodi favourites for ${target_user}."
+}

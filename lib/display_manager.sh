@@ -60,3 +60,37 @@ htpc_display_manager_disable_and_record() {
 
     htpc_log_info "Disabled and masked ${unit} (was ${prior_state}) for the next boot."
 }
+
+# Reverses htpc_display_manager_disable_and_record: unmasks the recorded
+# display manager unit and restores its prior enabled/disabled state.
+# Only acts on the exact "enabled"/"disabled" values recorded by
+# htpc_display_manager_disable_and_record; any other recorded value (e.g.
+# "static", or "unknown" from a systemctl failure at install time) is left
+# unmasked but not automatically enabled/disabled, since guessing intent
+# from an ambiguous prior state is worse than asking the admin to check.
+htpc_display_manager_restore() {
+    local unit prior_state
+
+    unit="$(htpc_install_record_get DISPLAY_MANAGER_UNIT)"
+    if [[ -z "${unit}" ]]; then
+        htpc_log_info "No display manager was recorded; nothing to restore."
+        return 0
+    fi
+
+    prior_state="$(htpc_install_record_get DISPLAY_MANAGER_PRIOR_STATE)"
+    systemctl unmask "${unit}" 2>/dev/null || true
+
+    case "${prior_state}" in
+        enabled)
+            systemctl enable "${unit}"
+            htpc_log_info "Unmasked and re-enabled ${unit}."
+            ;;
+        disabled)
+            systemctl disable "${unit}" 2>/dev/null || true
+            htpc_log_info "Unmasked ${unit} (was already disabled before install)."
+            ;;
+        *)
+            htpc_log_warn "Unmasked ${unit}, but its prior state ('${prior_state}') was not one this can restore automatically; check 'systemctl status ${unit}' manually."
+            ;;
+    esac
+}

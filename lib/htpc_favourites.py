@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Idempotently merges entries into a Kodi favourites.xml file.
+"""Idempotently merges entries into, or removes entries from, a Kodi
+favourites.xml file.
 
 Used by the installer to seed shortcuts for the Steam Gaming Mode and
 Desktop Mode Program add-ons, plus Kodi built-ins like PlayDVD /
-EjectTray(), without disturbing any favourites the user already has.
-See installer-spec.md and kodi-addon-spec.md.
+EjectTray(), without disturbing any favourites the user already has. Used
+by the uninstaller (in --remove mode) to remove exactly those seeded
+entries again, by name, while preserving everything else. See
+installer-spec.md, uninstaller-spec.md, and kodi-addon-spec.md.
 
 Usage:
     htpc_favourites.py <favourites.xml path> <name>=<command> ...
+    htpc_favourites.py --remove <favourites.xml path> <name> ...
 
 Example:
     htpc_favourites.py /home/user/.kodi/userdata/favourites.xml \\
@@ -15,6 +19,9 @@ Example:
         "Desktop Mode"=RunScript(script.htpc.desktop) \\
         "Play Disc"=PlayDVD(1) \\
         "Eject Tray"=EjectTray(1)
+
+    htpc_favourites.py --remove /home/user/.kodi/userdata/favourites.xml \\
+        "Steam Gaming Mode" "Desktop Mode" "Play Disc" "Eject Tray"
 
 Exits non-zero (without modifying the file) if it exists but is not
 parseable as XML, so a corrupt favourites.xml is never silently clobbered.
@@ -63,9 +70,13 @@ def merge_entries(root: ET.Element, entries: list[tuple[str, str]]) -> int:
     """
     changed = 0
     for name, command in entries:
-        matches = [elem for elem in root.findall("favourite") if elem.get("name") == name]
+        matches = [
+            elem for elem in root.findall("favourite") if elem.get("name") == name
+        ]
         if not matches:
-            matches = [elem for elem in root.findall("favourite") if elem.text == command]
+            matches = [
+                elem for elem in root.findall("favourite") if elem.text == command
+            ]
 
         if matches:
             keep, *duplicates = matches
@@ -84,6 +95,20 @@ def merge_entries(root: ET.Element, entries: list[tuple[str, str]]) -> int:
     return changed
 
 
+def remove_entries(root: ET.Element, names: list[str]) -> int:
+    """Remove favourites by name. Reverses merge_entries for uninstall:
+    only entries whose name exactly matches one this project seeds are
+    removed, leaving any other favourite (including ones the user added
+    themselves) untouched.
+    """
+    removed = 0
+    for name in names:
+        for elem in [e for e in root.findall("favourite") if e.get("name") == name]:
+            root.remove(elem)
+            removed += 1
+    return removed
+
+
 def write_favourites(root: ET.Element, path: Path) -> None:
     ET.indent(root, space="    ")
     tree = ET.ElementTree(root)
@@ -93,22 +118,35 @@ def write_favourites(root: ET.Element, path: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
+    remove_mode = bool(argv) and argv[0] == "--remove"
+    if remove_mode:
+        argv = argv[1:]
+
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
         return 1
 
     path = Path(argv[0])
     try:
-        entries = [parse_entry(raw) for raw in argv[1:]]
-        root = load_favourites(path)
-        added = merge_entries(root, entries)
-        if added:
+        if remove_mode:
+            if not path.exists():
+                print(f"{path} does not exist; nothing to remove.")
+                return 0
+            root = load_favourites(path)
+            changed = remove_entries(root, argv[1:])
+        else:
+            entries = [parse_entry(raw) for raw in argv[1:]]
+            root = load_favourites(path)
+            changed = merge_entries(root, entries)
+
+        if changed:
             write_favourites(root, path)
     except (ValueError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Updated {added} favourite(s) in {path}.")
+    verb = "Removed" if remove_mode else "Updated"
+    print(f"{verb} {changed} favourite(s) in {path}.")
     return 0
 
 

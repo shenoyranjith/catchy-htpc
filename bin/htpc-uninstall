@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Uninstaller. Implements uninstaller-spec.md: reverses everything
+# bin/htpc-install did, returning the machine to a stock CachyOS KDE
+# desktop login while preserving the target user's Kodi library, Steam
+# library, and any personal files. Safe to rerun.
+#
+# Usage:
+#   sudo bin/htpc-uninstall
+#
+# Must be run as root. Unlike the installer, the target user is not taken
+# from $SUDO_USER: it's read back from the installation record written by
+# the installer, since the uninstaller may reasonably be run by a
+# different admin than whoever originally installed it.
+
+HTPC_PROJECT_DIR="/opt/cachyos-htpc"
+
+script_dir() {
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
+
+require_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        echo "This command must be run as root (e.g. via sudo)." >&2
+        exit 1
+    fi
+}
+
+confirm() {
+    local prompt="$1" default="${2:-N}" reply
+    local hint="y/N"
+    [[ "${default}" =~ ^[Yy]$ ]] && hint="Y/n"
+
+    read -r -p "${prompt} [${hint}] " reply
+    reply="${reply:-${default}}"
+    [[ "${reply}" =~ ^[Yy]$ ]]
+}
+
+# If running from inside the installed project directory, this script is
+# about to delete the very directory it's executing from (see
+# step_remove_session_manager_and_project_files). Relocate to a temporary
+# copy first and re-exec from there, so that deletion is safe -- the
+# mirror image of how the installer bootstraps itself into
+# HTPC_PROJECT_DIR on the way in. A no-op when run from anywhere else
+# (e.g. a dev checkout), since there's nothing to relocate away from.
+#
+# Uses plain echo rather than htpc_log_info: this runs before source_libs,
+# same reasoning as htpc-install's step_bootstrap_project_files.
+step_relocate_if_needed() {
+    local self_dir
+    self_dir="$(script_dir)"
+
+    if [[ "${self_dir}" != "${HTPC_PROJECT_DIR}/bin" ]]; then
+        return 0
+    fi
+
+    local tmp_dir
+    tmp_dir="$(mktemp -d /tmp/cachyos-htpc-uninstall.XXXXXX)"
+    cp -a "${HTPC_PROJECT_DIR}/." "${tmp_dir}/"
+    echo "Running from a temporary copy (${tmp_dir}) so ${HTPC_PROJECT_DIR} can be removed safely." >&2
+
+    HTPC_UNINSTALL_TMPDIR="${tmp_dir}" exec "${tmp_dir}/bin/htpc-uninstall"
+}
+
+source_libs() {
+    local lib_dir="$1"
+    local lib
+    for lib in log backup checks packages btrfs snapshot services kodi display_manager desktop_shortcuts install_record; do
+        # shellcheck disable=SC1090
+        source "${lib_dir}/${lib}.sh"
+    done
+}
+
+# Mirrors the installer's own snapshot step (same underlying lib/snapshot.sh
+# mechanism), just offered before uninstalling instead of before installing.
+step_snapshot() {
+    if ! htpc_verify_btrfs; then
+        htpc_log_warn "Root filesystem is not btrfs; skipping snapshot offer."
+        return 0
+    fi
+
+    htpc_snapshot_ensure_tooling
+
+    if ! confirm "Create a Btrfs snapshot before uninstalling?" Y; then
+        htpc_log_info "Skipping snapshot creation at user's request."
+        return 0
+    fi
+
+    local previous
+    previous="$(htpc_snapshot_find_previous || true)"
+    if [[ -n "${previous}" ]]; then
+        if confirm "A previous installer snapshot (#${previous}) exists. Replace it?" N; then
+            htpc_snapshot_delete "${previous}"
+        else
+            htpc_log_info "Keeping existing snapshot #${previous}; not creating a new one."
+            return 0
+        fi
+    fi
+
+    local number
+    if number="$(htpc_snapshot_create)"; then
+        htpc_log_info "Snapshot #${number} created."
+        return 0
+    fi
+
+    htpc_log_error "Snapshot creation failed."
+    if ! confirm "Continue uninstalling without a snapshot?" N; then
+        htpc_log_error "Aborting uninstallation."
+        exit 1
+    fi
+}
+
+step_stop_active_session() {
+    local active
+    active="$(htpc_service_active || true)"
+
+    if [[ -z "${active}" ]]; then
+        htpc_log_info "No htpc-*.service session currently active."
+        return 0
+    fi
+
+    htpc_log_info "Stopping active session: ${active}."
+    systemctl stop "${active}" || htpc_log_error "Failed to stop ${active} cleanly; continuing."
+}
+
+step_remove_services() {
+    local unit
+    for unit in "${HTPC_SERVICE_UNITS[@]}"; do
+        htpc_service_uninstall "${unit}"
+    done
+}
+
+step_remove_polkit_and_environment() {
+    local target_user="$1"
+    htpc_polkit_rule_uninstall
+    htpc_environment_no_at_bridge_uninstall "${target_user}"
+}
+
+step_restore_steamos_session_select() {
+    local target_user="$1"
+    htpc_steamos_session_select_restore
+    htpc_user_unit_unmask "cachyos-gamescope-autologin.service" "${target_user}"
+}
+
+step_remove_session_manager_and_project_files() {
+    htpc_switch_uninstall
+
+    local recovery_dest="/usr/local/bin/htpc-recovery"
+    if [[ -f "${recovery_dest}" ]]; then
+        rm -f "${recovery_dest}"
+        htpc_log_info "Removed ${recovery_dest}."
+    fi
+
+    if [[ -d "${HTPC_PROJECT_DIR}" ]]; then
+        rm -rf "${HTPC_PROJECT_DIR}"
+        htpc_log_info "Removed project files at ${HTPC_PROJECT_DIR}."
+    fi
+}
+
+step_remove_kodi_and_shortcuts() {
+    local target_user="$1"
+    htpc_kodi_addons_remove "${target_user}" || htpc_log_error "Failed to remove Kodi add-ons for ${target_user}; continuing."
+    htpc_kodi_favourites_remove "${target_user}" || htpc_log_error "Failed to remove seeded favourites for ${target_user}; continuing."
+    htpc_desktop_shortcuts_remove "${target_user}" || htpc_log_error "Failed to remove desktop shortcuts for ${target_user}; continuing."
+}
+
+step_offer_package_removal() {
+    local packages_str="$1"
+
+    if [[ -z "${packages_str}" ]]; then
+        htpc_log_info "No packages were recorded as installed by the installer; nothing to offer removing."
+        return 0
+    fi
+
+    htpc_log_info "Packages installed by the installer: ${packages_str}"
+    if ! confirm "Remove these packages too?" N; then
+        htpc_log_info "Keeping installed packages."
+        return 0
+    fi
+
+    # shellcheck disable=SC2086 # intentional word-splitting of a space-separated list
+    if ! pacman -R --noconfirm ${packages_str}; then
+        htpc_log_error "Failed to remove one or more packages (something else may depend on them). Review manually with 'pacman -Rns'."
+    fi
+}
+
+step_verify_removal() {
+    local target_user="$1" home kodi_home apps_dir desktop_dir ok=0
+
+    home="$(getent passwd "${target_user}" | cut -d: -f6 2>/dev/null || true)"
+    kodi_home="${home}/.kodi"
+    apps_dir="${home}/.local/share/applications"
+    desktop_dir="$(htpc_desktop_shortcuts_desktop_dir "${target_user}" "${home}" 2>/dev/null || printf '%s\n' "${home}/Desktop")"
+
+    check() {
+        local description="$1"
+        shift
+        if "$@" >/dev/null 2>&1; then
+            htpc_log_info "OK: ${description}"
+        else
+            htpc_log_error "STILL PRESENT: ${description}"
+            ok=1
+        fi
+    }
+
+    check "project files removed from ${HTPC_PROJECT_DIR}" bash -c "[[ ! -d '${HTPC_PROJECT_DIR}' ]]"
+    check "htpc-switch removed" bash -c "[[ ! -e /usr/local/bin/htpc-switch ]]"
+    check "htpc-recovery command removed" bash -c "[[ ! -e /usr/local/bin/htpc-recovery ]]"
+    check "polkit rule removed" bash -c "[[ ! -f '${HTPC_POLKIT_RULES_DIR}/${HTPC_POLKIT_RULE_NAME}' ]]"
+    check "htpc-kodi.service removed" bash -c "! systemctl cat htpc-kodi.service >/dev/null 2>&1"
+    check "htpc-steam.service removed" bash -c "! systemctl cat htpc-steam.service >/dev/null 2>&1"
+    check "htpc-desktop.service removed" bash -c "! systemctl cat htpc-desktop.service >/dev/null 2>&1"
+    check "Steam Gaming Mode add-on removed" bash -c "[[ ! -d '${kodi_home}/addons/script.htpc.steam' ]]"
+    check "Desktop Mode add-on removed" bash -c "[[ ! -d '${kodi_home}/addons/script.htpc.desktop' ]]"
+    check "launcher shortcuts removed" bash -c "[[ ! -f '${apps_dir}/htpc-kodi.desktop' && ! -f '${apps_dir}/htpc-steam.desktop' ]]"
+    check "Desktop icons removed" bash -c "[[ ! -f '${desktop_dir}/htpc-kodi.desktop' && ! -f '${desktop_dir}/htpc-steam.desktop' ]]"
+    check "installation record removed" bash -c "[[ ! -f '${HTPC_INSTALL_RECORD_PATH}' ]]"
+
+    return "${ok}"
+}
+
+main() {
+    require_root
+    step_relocate_if_needed
+
+    source_libs "$(script_dir)/../lib"
+
+    if [[ -n "${HTPC_UNINSTALL_TMPDIR:-}" ]]; then
+        # shellcheck disable=SC2064 # intentional: expand now, this value never changes
+        trap "rm -rf '${HTPC_UNINSTALL_TMPDIR}'" EXIT
+    fi
+
+    if ! htpc_install_record_exists; then
+        htpc_log_error "No installation record found at ${HTPC_INSTALL_RECORD_PATH}; nothing to uninstall (or it was already removed)."
+        exit 1
+    fi
+
+    local target_user installed_packages
+    target_user="$(htpc_install_record_get TARGET_USER)"
+    if [[ -z "${target_user}" ]]; then
+        htpc_log_error "Installation record has no TARGET_USER; cannot proceed automatically. Inspect ${HTPC_INSTALL_RECORD_PATH} manually."
+        exit 1
+    fi
+    htpc_log_info "Target user: ${target_user}"
+    # Captured now, before the record is removed further down.
+    installed_packages="$(htpc_install_record_get INSTALLED_PACKAGES)"
+
+    step_snapshot
+
+    step_stop_active_session
+
+    step_remove_services
+
+    step_remove_polkit_and_environment "${target_user}"
+
+    htpc_display_manager_restore
+
+    step_restore_steamos_session_select "${target_user}"
+
+    step_remove_session_manager_and_project_files
+
+    step_remove_kodi_and_shortcuts "${target_user}"
+
+    htpc_install_record_remove
+
+    step_offer_package_removal "${installed_packages}"
+
+    htpc_log_info "Verifying removal."
+    if step_verify_removal "${target_user}"; then
+        htpc_log_info "Uninstallation verified successfully."
+    else
+        htpc_log_error "Some checks failed; review the errors above."
+    fi
+
+    if confirm "Reboot now to complete uninstallation?" N; then
+        systemctl reboot
+    else
+        htpc_log_info "Reboot later to return to the standard CachyOS KDE login."
+    fi
+}
+
+main "$@"

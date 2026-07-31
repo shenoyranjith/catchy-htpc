@@ -10,7 +10,7 @@
 - [x] Desktop transition
 - [x] Desktop shortcuts (KDE Desktop -> Kodi/Steam, see [Session Services Specification](session-services-spec.md))
 - [x] Logging (journald throughout, via lib/log.sh and htpc-switch's own logger calls)
-- [ ] [Uninstaller](uninstaller-spec.md)
+- [x] [Uninstaller](uninstaller-spec.md)
 
 ## Phase 2
 
