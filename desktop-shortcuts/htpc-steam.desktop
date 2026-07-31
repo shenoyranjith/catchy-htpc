@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HTPC: Steam Gaming Mode
+Comment=Switch from KDE Desktop to Steam Gaming Mode
+Exec=/usr/local/bin/htpc-switch steam
+Icon=steam
+Terminal=false
+Categories=Game;

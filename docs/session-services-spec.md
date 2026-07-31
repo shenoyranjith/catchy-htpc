@@ -47,6 +47,34 @@ These are system-level systemd units. No display manager is used to start them o
 - ExecStart runs startplasma-wayland directly as the existing user.
 - No SDDM or other display manager is involved.
 
+## Desktop Application Shortcuts
+
+Kodi has its own Program Add-ons for switching sessions (see
+kodi-addon-spec.md), and Steam has its own "Switch to Desktop" button (see
+above), but KDE Desktop had no equivalent way back until this was found
+missing during testing: nothing on the desktop invoked htpc-switch at
+all. Two `.desktop` entries are installed for the existing user, in both
+of the two places a KDE user would look for them:
+
+- `~/.local/share/applications/`, showing up in Plasma's application
+  launcher (Kickoff/KRunner) like any other installed app.
+- The user's actual Desktop folder (resolved via `xdg-user-dir DESKTOP`,
+  falling back to `~/Desktop`), as real desktop icons. These copies are
+  installed with the executable bit set, which is what KDE uses to
+  decide a `.desktop` file on the Desktop is trusted enough to launch
+  directly instead of showing an interstitial "this file has not been
+  marked as trusted" prompt.
+
+Both entries:
+
+- "HTPC: Switch to Kodi" -> `htpc-switch kodi`
+- "HTPC: Steam Gaming Mode" -> `htpc-switch steam`
+
+Named with an "HTPC:" prefix to be clearly distinguishable from the
+CachyOS-provided kodi.desktop and steam.desktop entries already present
+on the system, which launch Kodi/Steam directly rather than through
+htpc-switch and are not touched by this project.
+
 ## Display Manager
 
 - Whichever display manager is configured (discovered via the display-manager.service alias at install time, not hardcoded to any specific one) is disabled and masked during install.

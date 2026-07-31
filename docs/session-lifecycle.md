@@ -24,9 +24,9 @@ Steam -> Desktop
 
 Desktop -> Kodi
 
-## Invalid Transitions
-
 Desktop -> Steam
+
+## Invalid Transitions
 
 Any request to enter the currently active session.
 

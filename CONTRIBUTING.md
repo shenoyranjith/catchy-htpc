@@ -24,3 +24,10 @@
   the stock `plasmalogin` session, and disappears once no other session
   exists for that user. Fully exit any SSH terminal logged in as the
   target user before testing graphical, polkit-guarded actions.
+- The exact symptom depends on how the app requests authorization: some
+  apps get the repeated-prompt behavior described above, but others (e.g.
+  Btrfs Assistant) fail outright with no prompt at all -- something like
+  "Error creating textual authentication agent: Error opening current
+  controlling terminal" -- because they fall back to a text-mode polkit
+  agent when they can't resolve a graphical one for the (misattributed)
+  session. Same root cause, same fix: close SSH sessions first.

@@ -87,7 +87,7 @@ htpc_transition_valid() {
         boot:kodi) return 0 ;;
         kodi:steam|kodi:desktop) return 0 ;;
         steam:kodi|steam:desktop) return 0 ;;
-        desktop:kodi) return 0 ;;
+        desktop:kodi|desktop:steam) return 0 ;;
         *) return 1 ;;
     esac
 }

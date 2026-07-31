@@ -29,9 +29,9 @@ of which step happened to trigger their installation.
 
 ## Project Files
 
-Step 8 copies the project's bin/, lib/, systemd/, polkit/, and
-kodi-addons/ directories (not docs/ or dev/, which aren't needed at
-runtime) to /opt/cachyos-htpc, and the installer re-executes itself from
+Step 8 copies the project's bin/, lib/, systemd/, polkit/, kodi-addons/,
+and desktop-shortcuts/ directories (not docs/ or dev/, which aren't
+needed at runtime) to /opt/cachyos-htpc, and the installer re-executes itself from
 that copy for all subsequent steps. This ensures the installed system
 never depends on wherever the installer happened to be run from (e.g. a
 temporary dev checkout it can't assume will still exist later). Rerunning
@@ -87,6 +87,7 @@ Package sourcing prefers official CachyOS/Arch repositories, but AUR or other so
 
 - Install the Steam Gaming Mode and Desktop Mode Program add-ons directly into the target user's Kodi addons directory.
 - Seed or merge the target user's favourites.xml with entries that launch both add-ons, preserving any existing favourites.
+- Install the desktop application-launcher shortcuts (htpc-kodi.desktop, htpc-steam.desktop) into the target user's ~/.local/share/applications/, so KDE Desktop also has a way back into htpc-switch. See "Desktop Application Shortcuts" in session-services-spec.md.
 
 ## Boot Configuration
 

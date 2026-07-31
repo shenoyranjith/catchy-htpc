@@ -52,7 +52,7 @@ step_bootstrap_project_files() {
 
     repo_dir="$(cd "${self_dir}/.." && pwd)"
     install -d -m 0755 "${HTPC_PROJECT_DIR}"
-    for item in bin lib systemd polkit kodi-addons; do
+    for item in bin lib systemd polkit kodi-addons desktop-shortcuts; do
         rm -rf "${HTPC_PROJECT_DIR:?}/${item}"
         cp -a "${repo_dir}/${item}" "${HTPC_PROJECT_DIR}/${item}"
     done
@@ -64,7 +64,7 @@ step_bootstrap_project_files() {
 source_libs() {
     local lib_dir="$1"
     local lib
-    for lib in log backup checks packages btrfs snapshot services kodi display_manager install_record; do
+    for lib in log backup checks packages btrfs snapshot services kodi display_manager desktop_shortcuts install_record; do
         # shellcheck disable=SC1090
         source "${lib_dir}/${lib}.sh"
     done
@@ -132,8 +132,11 @@ step_snapshot() {
 }
 
 step_verify_installation() {
-    local user="$1" kodi_home ok=0
+    local user="$1" kodi_home home apps_dir desktop_dir ok=0
     kodi_home="$(htpc_kodi_home "${user}")"
+    home="$(dirname "${kodi_home}")"
+    apps_dir="${home}/.local/share/applications"
+    desktop_dir="$(htpc_desktop_shortcuts_desktop_dir "${user}" "${home}")"
 
     check() {
         local description="$1"
@@ -158,6 +161,10 @@ step_verify_installation() {
     check "Steam Gaming Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.steam/addon.xml"
     check "Desktop Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.desktop/addon.xml"
     check "favourites seeded" grep -q "script.htpc.steam" "${kodi_home}/userdata/favourites.xml"
+    check "launcher shortcut to Kodi installed" test -f "${apps_dir}/htpc-kodi.desktop"
+    check "launcher shortcut to Steam installed" test -f "${apps_dir}/htpc-steam.desktop"
+    check "Desktop icon for Kodi installed" test -x "${desktop_dir}/htpc-kodi.desktop"
+    check "Desktop icon for Steam installed" test -x "${desktop_dir}/htpc-steam.desktop"
     check "installation record present" htpc_install_record_exists
 
     return "${ok}"
@@ -203,6 +210,7 @@ main() {
 
     htpc_kodi_addons_install "${user}"
     htpc_kodi_favourites_seed "${user}"
+    htpc_desktop_shortcuts_install "${user}"
 
     systemctl enable htpc-kodi.service
 

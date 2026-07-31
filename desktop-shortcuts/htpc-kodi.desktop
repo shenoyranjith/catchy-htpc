@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HTPC: Switch to Kodi
+Comment=Switch from KDE Desktop back to the Kodi HTPC interface
+Exec=/usr/local/bin/htpc-switch kodi
+Icon=kodi
+Terminal=false
+Categories=AudioVideo;
