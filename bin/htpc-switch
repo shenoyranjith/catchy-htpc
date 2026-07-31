@@ -8,7 +8,22 @@ set -euo pipefail
 #
 # Runs as the existing user (not root). A polkit rule installed alongside
 # this script grants passwordless start/stop/restart of only the three
-# htpc-*.service units, so no sudo is needed here.
+# htpc-*.service units, so no sudo is needed here. If invoked as root (e.g.
+# via the pkexec-authorized steamos-session-select wrapper), it re-execs
+# itself as the existing user before doing anything else.
+#
+# htpc-switch is commonly invoked from *within* the session being switched
+# away from: a future Kodi add-on, or Steam's own "Switch to Desktop"
+# button (via the steamos-session-select wrapper). If this script stopped
+# the current htpc-*.service inline, systemd would send SIGTERM to that
+# unit's whole cgroup as part of the stop -- including htpc-switch itself,
+# since it's a descendant process of that same session -- killing it before
+# it could start the destination session. To avoid this, the actual
+# stop-current/start-target work is always dispatched to a detached
+# transient --user unit (systemd-run --user), which lives in a completely
+# separate cgroup (under user@<uid>.service) and is unaffected by the old
+# session's teardown. Validation (invalid transition, already running,
+# failure to even dispatch) is still reported synchronously to the caller.
 #
 # Self-contained by design: this script is installed standalone to
 # /usr/local/bin and must keep working even if the project's repo checkout
@@ -124,11 +139,53 @@ htpc_start_with_recovery() {
     return 1
 }
 
+# Performs the actual switch: stopping the current session's unit (if any)
+# and starting the destination with recovery. Only ever run detached, via
+# systemd-run --user from main(); never called inline. See the file header
+# for why.
+htpc_worker_main() {
+    local current="$1" target="$2"
+
+    if [[ "${current}" != "boot" ]]; then
+        htpc_log_info "Stopping ${HTPC_SESSION_UNIT[${current}]}."
+        systemctl stop "${HTPC_SESSION_UNIT[${current}]}" \
+            || htpc_log_error "Failed to stop ${HTPC_SESSION_UNIT[${current}]} cleanly; continuing."
+    fi
+
+    if ! htpc_start_with_recovery "${target}"; then
+        exit 1
+    fi
+}
+
+# Prints the user the htpc-*.service units are configured to run as, by
+# reading it back from the already-installed htpc-kodi.service unit. Used
+# to drop root privileges when invoked as root (e.g. via pkexec from the
+# steamos-session-select wrapper).
+htpc_configured_user() {
+    systemctl show -p User --value "${HTPC_SESSION_UNIT[kodi]}"
+}
+
 usage() {
     echo "Usage: $(basename "$0") {kodi|steam|desktop}" >&2
 }
 
 main() {
+    if [[ "${1:-}" == "--worker" ]]; then
+        shift
+        htpc_worker_main "$@"
+        return
+    fi
+
+    if [[ "$(id -u)" -eq 0 ]]; then
+        local configured_user
+        configured_user="$(htpc_configured_user)"
+        if [[ -z "${configured_user}" ]]; then
+            htpc_log_error "Running as root and could not determine the configured user; aborting."
+            exit 1
+        fi
+        exec runuser -u "${configured_user}" -- "$0" "$@"
+    fi
+
     local target="${1:-}"
     if [[ -z "${target}" || -z "${HTPC_SESSION_UNIT[${target}]+x}" ]]; then
         usage
@@ -148,13 +205,11 @@ main() {
         exit 1
     fi
 
-    if [[ "${current}" != "boot" ]]; then
-        htpc_log_info "Stopping ${HTPC_SESSION_UNIT[${current}]}."
-        systemctl stop "${HTPC_SESSION_UNIT[${current}]}" \
-            || htpc_log_error "Failed to stop ${HTPC_SESSION_UNIT[${current}]} cleanly; continuing."
-    fi
-
-    if ! htpc_start_with_recovery "${target}"; then
+    htpc_log_info "Dispatching switch ${current} -> ${target}."
+    if ! systemd-run --user --collect --quiet \
+        --unit="htpc-switch-worker-$$" \
+        /usr/local/bin/htpc-switch --worker "${current}" "${target}"; then
+        htpc_log_error "Failed to dispatch session switch."
         exit 1
     fi
 }

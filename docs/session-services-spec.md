@@ -18,12 +18,14 @@ These are system-level systemd units. No display manager is used to start them o
 - Conflicts= and After= getty@tty1.service.
 - Conflicts= the other two htpc-*.service units, so systemd itself enforces single-session exclusivity in addition to htpc-switch.
 - Only htpc-switch starts or stops these units during normal operation.
+- Restart=on-success, so an app-initiated clean exit (Kodi's own "Exit", quitting Steam outright) relaunches that session instead of stranding the user on a blank tty1. This does not conflict with htpc-switch: systemd never applies Restart= to a unit stopped via `systemctl stop`, which is how htpc-switch always stops the outgoing session. A genuine crash (non-zero exit or signal) is not restarted, to avoid masking real failures behind a restart loop.
 
 ## Kodi (htpc-kodi.service)
 
 - Package: kodi (official repository).
 - Runs Kodi standalone with GBM windowing, so Kodi owns DRM/KMS directly without a separate compositor.
 - Runs as the existing user, using that user's own Kodi profile and data.
+- SupplementaryGroups=input render: Kodi's GBM windowing opens /dev/input/event* directly via libinput rather than acquiring devices through logind's D-Bus hand-off (the mechanism KDE and gamescope use), so it needs real group membership to read them. Granted here rather than via a persistent usermod so it only applies to this session and is fully reverted by removing this unit.
 - Enabled by default so it starts automatically at boot.
 
 ## Steam Gaming Mode (htpc-steam.service)
@@ -31,10 +33,13 @@ These are system-level systemd units. No display manager is used to start them o
 - Packages: gamescope-session-cachyos, lib32-gamescope (official CachyOS repository).
 - ExecStart runs the package's start-gamescope-session entrypoint as the existing user.
 - The package's own SDDM-oriented autologin unit, cachyos-gamescope-autologin.service (a systemd --user unit), is masked for the existing user. It is not needed here and would otherwise attempt to modify SDDM configuration when the session exits.
-- The package's steamos-session-select script is replaced with a thin wrapper:
+- The package's steamos-session-select script (/usr/bin/steamos-session-select) is replaced with a thin wrapper (bin/htpc-steamos-session-select in this repo):
   - gamescope -> htpc-switch steam
   - plasma -> htpc-switch kodi
+  - persistent / oneshot -> no-op (SDDM autologin preference modes; not applicable here)
 - This makes Steam's own "Switch to Desktop" button return to Kodi, since Kodi is the primary interface. No SDDM interaction occurs at any point.
+- Steam invokes this script via pkexec (pre-authorized passwordlessly for any user by gamescope-session-cachyos's own polkit policy), so it runs as root; htpc-switch itself handles dropping back to the existing user. See session-manager-spec.md.
+- The original script is preserved via a `.htpc-backup` copy for the uninstaller to restore. Since /usr/bin/steamos-session-select is owned by the gamescope-session-cachyos package, a future package update may silently overwrite the wrapper back to upstream; re-running the installer's steam service step re-applies it.
 
 ## KDE Desktop (htpc-desktop.service)
 

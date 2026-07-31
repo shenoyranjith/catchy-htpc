@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Installs and manages the htpc-*.service systemd units defined in
-# session-services-spec.md. Requires lib/log.sh.
+# session-services-spec.md. Requires lib/log.sh and lib/backup.sh.
 
 HTPC_SYSTEMD_DIR="/etc/systemd/system"
 HTPC_SERVICE_UNITS=(htpc-kodi.service htpc-steam.service htpc-desktop.service)
 HTPC_BIN_DIR="/usr/local/bin"
 HTPC_POLKIT_RULES_DIR="/etc/polkit-1/rules.d"
 HTPC_POLKIT_RULE_NAME="49-htpc-switch.rules"
+HTPC_STEAMOS_SESSION_SELECT_PATH="/usr/bin/steamos-session-select"
 
 htpc_unit_template_dir() {
     cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" && pwd
@@ -18,6 +19,10 @@ htpc_polkit_rule_template_dir() {
 
 htpc_switch_source_path() {
     printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-switch"
+}
+
+htpc_steamos_session_select_source_path() {
+    printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-steamos-session-select"
 }
 
 # Installs a unit file from systemd/<name> into /etc/systemd/system/<name>,
@@ -133,6 +138,39 @@ htpc_polkit_rule_install() {
     install -m 0644 "${tmp}" "${dest}"
     rm -f "${tmp}"
     htpc_log_info "Installed polkit rule for user ${target_user} at ${dest}."
+}
+
+# Replaces gamescope-session-cachyos's steamos-session-select with a thin
+# wrapper that redirects Steam's own session-switching UI actions to
+# htpc-switch instead of its SDDM-oriented autologin logic. The original is
+# preserved via htpc_backup_file so the uninstaller can restore it.
+# Idempotent. Note: since this file is owned by the gamescope-session-cachyos
+# package, a future package update may silently overwrite it back to
+# upstream; re-run this after updating that package.
+htpc_steamos_session_select_install() {
+    local script dest
+
+    script="$(htpc_steamos_session_select_source_path)"
+    dest="${HTPC_STEAMOS_SESSION_SELECT_PATH}"
+
+    if [[ ! -f "${script}" ]]; then
+        htpc_log_error "steamos-session-select wrapper not found at ${script}."
+        return 1
+    fi
+
+    if [[ ! -f "${dest}" ]]; then
+        htpc_log_error "No existing steamos-session-select found at ${dest}; is gamescope-session-cachyos installed?"
+        return 1
+    fi
+
+    if cmp -s "${script}" "${dest}"; then
+        htpc_log_info "steamos-session-select already replaced with the htpc wrapper."
+        return 0
+    fi
+
+    htpc_backup_file "${dest}"
+    install -m 0755 "${script}" "${dest}"
+    htpc_log_info "Replaced ${dest} with the htpc-switch wrapper."
 }
 
 # Prints the currently active htpc-*.service unit, if any. Empty output

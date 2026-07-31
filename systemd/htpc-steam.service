@@ -14,7 +14,12 @@ StandardInput=tty
 StandardOutput=journal
 StandardError=journal
 ExecStart=/usr/bin/start-gamescope-session
-Restart=no
+# Quitting Steam entirely (not via "Switch to Desktop", which goes through
+# the steamos-session-select wrapper to htpc-switch instead) exits this
+# process cleanly; Restart=on-success just relaunches Gaming Mode rather
+# than stranding the user on a blank tty1. See htpc-kodi.service for why
+# this doesn't conflict with htpc-switch's own stop/start calls.
+Restart=on-success
 
 [Install]
 WantedBy=graphical.target

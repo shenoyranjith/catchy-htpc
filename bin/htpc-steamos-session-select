@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Thin replacement for gamescope-session-cachyos's own
+# /usr/bin/steamos-session-select, installed in its place. See
+# session-services-spec.md and installer-spec.md.
+#
+# The original script drives SDDM's autologin config and D-Bus session
+# logout/shutdown calls, none of which apply here since no display manager
+# is used. Steam calls this same path (sometimes via pkexec, hence
+# htpc-switch's own root-dropping logic) for its "Switch to Desktop"
+# button and the equivalent "switch to Gaming Mode" action, so both are
+# simply redirected to htpc-switch. "persistent"/"oneshot" configure SDDM
+# autologin behaviour that has no equivalent here and are no-ops.
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") <mode>
+
+Modes:
+  plasma      Switch to the primary interface (Kodi). Same action Steam's
+              own "Switch to Desktop" triggers.
+  gamescope   Switch to Steam Gaming Mode.
+  persistent  No-op (SDDM autologin behaviour; not applicable here).
+  oneshot     No-op (SDDM autologin behaviour; not applicable here).
+EOF
+}
+
+case "${1:-}" in
+    plasma)
+        exec /usr/local/bin/htpc-switch kodi
+        ;;
+    gamescope)
+        exec /usr/local/bin/htpc-switch steam
+        ;;
+    persistent|oneshot)
+        exit 0
+        ;;
+    *)
+        [[ -n "${1:-}" ]] && echo "Unknown session '$1'" >&2
+        usage
+        exit 1
+        ;;
+esac

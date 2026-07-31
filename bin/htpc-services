@@ -54,6 +54,7 @@ cmd_install_steam() {
     # manager's autologin config on session exit. Irrelevant here since
     # htpc-switch (not a display manager) controls session transitions.
     htpc_user_unit_mask "cachyos-gamescope-autologin.service" "${user}"
+    htpc_steamos_session_select_install
 }
 
 cmd_install_switch() {
@@ -78,6 +79,8 @@ main() {
 
     # shellcheck source=../lib/log.sh
     source "${lib_dir}/log.sh"
+    # shellcheck source=../lib/backup.sh
+    source "${lib_dir}/backup.sh"
     # shellcheck source=../lib/services.sh
     source "${lib_dir}/services.sh"
 

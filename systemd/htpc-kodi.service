@@ -21,7 +21,13 @@ StandardOutput=journal
 StandardError=journal
 Environment=WINDOWING=gbm
 ExecStart=/usr/bin/kodi-standalone
-Restart=no
+# Kodi's own "Exit" quits the whole process cleanly (exit 0); without this,
+# that would strand the user on a blank tty1 with no running session.
+# Restart=on-success relaunches Kodi in that case, but does not fight
+# htpc-switch: a switch away stops this unit via systemctl, which systemd
+# never subjects to Restart=, and a genuine crash (non-zero exit/signal) is
+# left alone rather than restart-looping.
+Restart=on-success
 
 [Install]
 WantedBy=graphical.target
