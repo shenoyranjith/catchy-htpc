@@ -8,6 +8,7 @@ HTPC_BIN_DIR="/usr/local/bin"
 HTPC_POLKIT_RULES_DIR="/etc/polkit-1/rules.d"
 HTPC_POLKIT_RULE_NAME="49-htpc-switch.rules"
 HTPC_STEAMOS_SESSION_SELECT_PATH="/usr/bin/steamos-session-select"
+HTPC_ENVIRONMENT_D_PATH="/etc/environment.d/90-cachyos-htpc.conf"
 
 htpc_unit_template_dir() {
     cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" && pwd
@@ -171,6 +172,51 @@ htpc_steamos_session_select_install() {
     htpc_backup_file "${dest}"
     install -m 0755 "${script}" "${dest}"
     htpc_log_info "Replaced ${dest} with the htpc-switch wrapper."
+}
+
+# Installs a systemd environment.d drop-in disabling the AT-SPI
+# accessibility bridge (NO_AT_BRIDGE=1) for the target user's systemd --user
+# manager. See session-services-spec.md "Accessibility Bridge" for why this
+# exists: Environment= on the htpc-*.service units only affects the
+# directly-exec'd process (kodi-standalone / start-gamescope-session /
+# startplasma-wayland) itself, but D-Bus-activated helpers -- notably
+# at-spi2-registryd, which both Steam's Qt UI and Plasma trigger -- get
+# their environment from the user manager's own default environment
+# instead, which only environment.d controls. Confirmed live: setting
+# NO_AT_BRIDGE on the units alone did not stop new at-spi2-registryd
+# instances from leaking (one per session start, never cleaned up again
+# until reboot) on every switch into Steam or Desktop.
+htpc_environment_no_at_bridge_install() {
+    local target_user="$1"
+    local content="NO_AT_BRIDGE=1"
+
+    if [[ -f "${HTPC_ENVIRONMENT_D_PATH}" ]] && grep -qx "${content}" "${HTPC_ENVIRONMENT_D_PATH}"; then
+        htpc_log_info "environment.d NO_AT_BRIDGE already installed."
+    else
+        install -d -m 0755 "$(dirname "${HTPC_ENVIRONMENT_D_PATH}")"
+        printf '%s\n' "${content}" > "${HTPC_ENVIRONMENT_D_PATH}"
+        htpc_log_info "Installed ${HTPC_ENVIRONMENT_D_PATH}."
+    fi
+
+    # environment.d is normally only read once, at the user manager's own
+    # startup. Our sessions all share one long-lived manager across
+    # switches rather than a fresh one per login (see
+    # session-services-spec.md), so without this, the drop-in would not
+    # take effect until the user's very next full login (e.g. after a
+    # reboot). daemon-reload re-runs systemd's environment generators
+    # against the already-running manager, so it takes effect immediately
+    # instead.
+    #
+    # runuser alone does not set XDG_RUNTIME_DIR, so `systemctl --user`
+    # would otherwise silently look for (and fail to find) a manager under
+    # root's own runtime dir instead of the target user's.
+    local uid
+    uid="$(id -u "${target_user}" 2>/dev/null)" || uid=""
+    if [[ -n "${uid}" ]] && runuser -u "${target_user}" -- env "XDG_RUNTIME_DIR=/run/user/${uid}" systemctl --user daemon-reload 2>/dev/null; then
+        htpc_log_info "Reloaded ${target_user}'s systemd --user environment."
+    else
+        htpc_log_warn "Could not reload ${target_user}'s systemd --user manager (no active session?); it will pick up NO_AT_BRIDGE on next login instead."
+    fi
 }
 
 # Prints the currently active htpc-*.service unit, if any. Empty output

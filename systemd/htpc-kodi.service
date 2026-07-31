@@ -20,6 +20,13 @@ StandardInput=tty
 StandardOutput=journal
 StandardError=journal
 Environment=WINDOWING=gbm
+# Without this, GTK/Qt components pulled in transitively (codecs, addons)
+# each trigger a D-Bus-activated, per-connection at-spi2-registryd instance
+# (dbus-:N.NN-org.a11y.atspi.Registry@0.service) that isn't reliably torn
+# down again on session switch, leaking one every so often. Confirmed live:
+# ~10 accumulated over one afternoon of switching. No accessibility/screen
+# reader use case exists on this appliance, so skip the bridge outright.
+Environment=NO_AT_BRIDGE=1
 ExecStart=/usr/bin/kodi-standalone
 # Kodi's own "Exit" quits the whole process cleanly (exit 0); without this,
 # that would strand the user on a blank tty1 with no running session.

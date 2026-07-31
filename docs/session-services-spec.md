@@ -75,6 +75,47 @@ CachyOS-provided kodi.desktop and steam.desktop entries already present
 on the system, which launch Kodi/Steam directly rather than through
 htpc-switch and are not touched by this project.
 
+## Accessibility Bus Cleanup
+
+Found during live testing, unrelated to any specific session's own spec but
+affecting all of them: Steam's Chromium-based UI (and, less reliably,
+some Plasma helper processes) connect to the AT-SPI accessibility bus on
+startup, which D-Bus/systemd activates as a transient per-connection unit
+(`dbus-:N.NN-org.a11y.atspi.Registry@0.service`, running
+`at-spi2-registryd`). Nothing ever tears these down again once that
+connection's session ends -- confirmed live, 17 had accumulated after an
+afternoon of session switching, and would keep growing indefinitely until
+reboot. This appliance has no accessibility/screen-reader use case, so two
+things are done about it:
+
+- `Environment=NO_AT_BRIDGE=1` on all three htpc-*.service units, plus the
+  same variable in a systemd `environment.d` drop-in
+  (`/etc/environment.d/90-cachyos-htpc.conf`, installed by
+  `htpc_environment_no_at_bridge_install` in lib/services.sh) for the
+  target user's systemd --user manager, so D-Bus-activated helpers that
+  aren't direct children of the session's own unit (Plasma's kwallet,
+  powerdevil helpers, etc.) also see it. This variable is meant to tell
+  GTK/Qt to skip connecting to the accessibility bus in the first place.
+  `environment.d` is normally only read once at the user manager's own
+  startup; since sessions here share one long-lived manager across
+  switches rather than getting a fresh one per login, installing this
+  drop-in also runs `systemctl --user daemon-reload` (with
+  `XDG_RUNTIME_DIR` set explicitly, since plain `runuser` from root does
+  not set it) so it takes effect immediately.
+- This alone was confirmed live to be insufficient: Steam's Chromium-based
+  UI connects to the accessibility bus regardless of `NO_AT_BRIDGE`. So
+  `htpc-switch` also actively reaps any leftover
+  `dbus-*-org.a11y.atspi.Registry@0.service` units as part of every
+  switch (`htpc_cleanup_accessibility_bus`), right after stopping the
+  outgoing session -- by that point it has had its whole lifetime to
+  leak one, so there's no race with a not-yet-connected new session. This
+  is the actual guaranteed fix, regardless of whatever ends up
+  triggering the connection; `NO_AT_BRIDGE` is kept alongside it as a
+  reasonable attempt at prevention rather than just cleanup.
+
+Confirmed live: count went from 17 accumulated leaks down to zero after
+this fix, across a full round of session switching.
+
 ## Display Manager
 
 - Whichever display manager is configured (discovered via the display-manager.service alias at install time, not hardcoded to any specific one) is disabled and masked during install.

@@ -13,6 +13,10 @@ TTYVHangup=yes
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal
+# See htpc-kodi.service for why: avoids leaking a per-connection
+# at-spi2-registryd instance. Desktop here is a maintenance/recovery
+# workspace, not a daily driver, so screen-reader support is not a concern.
+Environment=NO_AT_BRIDGE=1
 ExecStart=/usr/bin/startplasma-wayland
 Restart=no
 

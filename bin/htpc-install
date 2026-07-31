@@ -168,6 +168,7 @@ step_verify_installation() {
     check "Desktop icon for Kodi installed" test -x "${desktop_dir}/htpc-kodi.desktop"
     check "Desktop icon for Steam installed" test -x "${desktop_dir}/htpc-steam.desktop"
     check "installation record present" htpc_install_record_exists
+    check "accessibility bus opt-out installed" test -f "${HTPC_ENVIRONMENT_D_PATH}"
 
     return "${ok}"
 }
@@ -206,6 +207,7 @@ main() {
     htpc_service_install "htpc-kodi.service" "${user}"
     htpc_service_install "htpc-steam.service" "${user}"
     htpc_service_install "htpc-desktop.service" "${user}"
+    htpc_environment_no_at_bridge_install "${user}"
     htpc_user_unit_mask "cachyos-gamescope-autologin.service" "${user}"
     htpc_steamos_session_select_install
     htpc_display_manager_disable_and_record

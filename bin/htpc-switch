@@ -139,6 +139,22 @@ htpc_start_with_recovery() {
     return 1
 }
 
+# Reaps leaked org.a11y.atspi.Registry transient units. Qt/GTK apps are
+# supposed to skip connecting to the accessibility bus entirely given
+# NO_AT_BRIDGE=1 (set on all three htpc-*.service units and, for anything
+# D-Bus-activated instead, via the environment.d drop-in installed by
+# htpc_environment_no_at_bridge_install), but confirmed live that at least
+# one trigger -- Steam's Chromium-based UI -- connects anyway regardless.
+# Each connection leaves behind a dbus-:N.NN-org.a11y.atspi.Registry@0
+# transient unit that is never cleaned up on its own; stopping it here on
+# every switch is a guaranteed fix (whatever the cause) rather than a
+# best-effort prevention. Harmless if none exist; this unit is worker-only
+# and runs as the target user via systemd-run --user, so it already has
+# the right XDG_RUNTIME_DIR/D-Bus context for `systemctl --user`.
+htpc_cleanup_accessibility_bus() {
+    systemctl --user stop 'dbus-*-org.a11y.atspi.Registry@0.service' 2>/dev/null || true
+}
+
 # Performs the actual switch: stopping the current session's unit (if any)
 # and starting the destination with recovery. Only ever run detached, via
 # systemd-run --user from main(); never called inline. See the file header
@@ -150,6 +166,11 @@ htpc_worker_main() {
         htpc_log_info "Stopping ${HTPC_SESSION_UNIT[${current}]}."
         systemctl stop "${HTPC_SESSION_UNIT[${current}]}" \
             || htpc_log_error "Failed to stop ${HTPC_SESSION_UNIT[${current}]} cleanly; continuing."
+        # Run now, not after starting the target: the session just stopped
+        # has had its whole lifetime to leak one, so there is no race,
+        # unlike checking right after starting the *new* one (which may not
+        # have connected yet).
+        htpc_cleanup_accessibility_bus
     fi
 
     if ! htpc_start_with_recovery "${target}"; then
