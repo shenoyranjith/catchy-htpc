@@ -1,0 +1,20 @@
+[Unit]
+Description=CachyOS HTPC - Steam Gaming Mode session
+After=systemd-user-sessions.service getty@tty1.service plymouth-quit-wait.service sound.target
+Conflicts=getty@tty1.service htpc-kodi.service htpc-desktop.service
+
+[Service]
+Type=simple
+User=__HTPC_USER__
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/start-gamescope-session
+Restart=no
+
+[Install]
+WantedBy=graphical.target

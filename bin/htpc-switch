@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Session Manager. Switches between the three htpc-*.service session units,
+# enforcing the transition rules in session-lifecycle.md and applying the
+# recovery rules if the destination session fails to start. See
+# session-manager-spec.md.
+#
+# Runs as the existing user (not root). A polkit rule installed alongside
+# this script grants passwordless start/stop/restart of only the three
+# htpc-*.service units, so no sudo is needed here.
+#
+# Self-contained by design: this script is installed standalone to
+# /usr/local/bin and must keep working even if the project's repo checkout
+# it was installed from is no longer present.
+#
+# Usage:
+#   htpc-switch kodi
+#   htpc-switch steam
+#   htpc-switch desktop
+
+htpc_log() {
+    local level="$1"
+    shift
+    local message="$*"
+
+    case "${level}" in
+        ERROR|WARN)
+            printf '[%s] %s\n' "${level}" "${message}" >&2
+            ;;
+        *)
+            printf '[%s] %s\n' "${level}" "${message}"
+            ;;
+    esac
+
+    if command -v logger >/dev/null 2>&1; then
+        logger -t cachyos-htpc -- "${level}: ${message}" || true
+    fi
+}
+
+htpc_log_info()  { htpc_log "INFO" "$@"; }
+htpc_log_error() { htpc_log "ERROR" "$@"; }
+
+declare -A HTPC_SESSION_UNIT=(
+    [kodi]="htpc-kodi.service"
+    [steam]="htpc-steam.service"
+    [desktop]="htpc-desktop.service"
+)
+
+# Prints the name of the currently active session, or "boot" if none of the
+# htpc-*.service units are active (matching the Boot state in
+# session-lifecycle.md).
+htpc_current_session() {
+    local name unit
+    for name in "${!HTPC_SESSION_UNIT[@]}"; do
+        unit="${HTPC_SESSION_UNIT[${name}]}"
+        if systemctl is-active --quiet "${unit}"; then
+            printf '%s\n' "${name}"
+            return 0
+        fi
+    done
+    printf 'boot\n'
+}
+
+# Returns success if switching from $1 to $2 is a valid transition per
+# session-lifecycle.md. Boot -> desktop exists in the lifecycle but is a
+# boot-time fallback only, not a user-facing command, so it is intentionally
+# excluded here.
+htpc_transition_valid() {
+    local from="$1" to="$2"
+    case "${from}:${to}" in
+        boot:kodi) return 0 ;;
+        kodi:steam|kodi:desktop) return 0 ;;
+        steam:kodi|steam:desktop) return 0 ;;
+        desktop:kodi) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+htpc_start_getty_fallback() {
+    htpc_log_error "Entering Fatal Error: falling back to a plain TTY login on tty1."
+    systemctl start getty@tty1.service || htpc_log_error "Failed to start getty@tty1.service."
+}
+
+# Starts the given unit and confirms it actually reached the active state.
+htpc_try_start() {
+    local unit="$1"
+    htpc_log_info "Starting ${unit}."
+    if ! systemctl start "${unit}"; then
+        htpc_log_error "systemctl start ${unit} failed."
+        return 1
+    fi
+    if ! systemctl is-active --quiet "${unit}"; then
+        htpc_log_error "${unit} did not reach the active state."
+        return 1
+    fi
+    return 0
+}
+
+# Starts the destination session, applying the recovery rules in
+# session-lifecycle.md if it fails: a failed Kodi or Steam falls back to
+# Desktop, and a failed Desktop enters Fatal Error.
+htpc_start_with_recovery() {
+    local target="$1"
+
+    if htpc_try_start "${HTPC_SESSION_UNIT[${target}]}"; then
+        htpc_log_info "Now running ${target}."
+        return 0
+    fi
+
+    if [[ "${target}" == "desktop" ]]; then
+        htpc_start_getty_fallback
+        return 1
+    fi
+
+    htpc_log_error "${target} failed to start; falling back to desktop."
+    if htpc_try_start "${HTPC_SESSION_UNIT[desktop]}"; then
+        htpc_log_info "Now running desktop (recovered from failed ${target})."
+        return 0
+    fi
+
+    htpc_log_error "desktop also failed to start."
+    htpc_start_getty_fallback
+    return 1
+}
+
+usage() {
+    echo "Usage: $(basename "$0") {kodi|steam|desktop}" >&2
+}
+
+main() {
+    local target="${1:-}"
+    if [[ -z "${target}" || -z "${HTPC_SESSION_UNIT[${target}]+x}" ]]; then
+        usage
+        exit 1
+    fi
+
+    local current
+    current="$(htpc_current_session)"
+
+    if [[ "${current}" == "${target}" ]]; then
+        htpc_log_error "Already running ${target}; nothing to do."
+        exit 1
+    fi
+
+    if ! htpc_transition_valid "${current}" "${target}"; then
+        htpc_log_error "Invalid transition: ${current} -> ${target}."
+        exit 1
+    fi
+
+    if [[ "${current}" != "boot" ]]; then
+        htpc_log_info "Stopping ${HTPC_SESSION_UNIT[${current}]}."
+        systemctl stop "${HTPC_SESSION_UNIT[${current}]}" \
+            || htpc_log_error "Failed to stop ${HTPC_SESSION_UNIT[${current}]} cleanly; continuing."
+    fi
+
+    if ! htpc_start_with_recovery "${target}"; then
+        exit 1
+    fi
+}
+
+main "$@"

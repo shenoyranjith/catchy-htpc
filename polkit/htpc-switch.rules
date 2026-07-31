@@ -1,0 +1,24 @@
+// Grants __HTPC_USER__ passwordless start/stop/restart of only the three
+// htpc-*.service session units, so htpc-switch can control them without
+// sudo or a setuid binary. See session-manager-spec.md.
+
+polkit.addRule(function(action, subject) {
+    if (action.id != "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (subject.user != "__HTPC_USER__") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var allowedUnits = ["htpc-kodi.service", "htpc-steam.service", "htpc-desktop.service"];
+    var allowedVerbs = ["start", "stop", "restart"];
+
+    if (allowedUnits.indexOf(action.lookup("unit")) == -1) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (allowedVerbs.indexOf(action.lookup("verb")) == -1) {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    return polkit.Result.YES;
+});

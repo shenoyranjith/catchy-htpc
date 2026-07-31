@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Standalone tooling for the htpc-*.service systemd units defined in
+# session-services-spec.md, so each one can be installed and exercised
+# individually before Session Manager exists. install.sh will call the
+# same lib/ functions directly once it is written.
+#
+# This only installs unit files; it deliberately does not start, stop, or
+# enable them. Use systemctl directly for that while testing:
+#   sudo systemctl start htpc-kodi.service
+#   sudo systemctl stop htpc-kodi.service
+#   journalctl -u htpc-kodi.service -f
+#
+# Usage:
+#   htpc-services install-kodi      Install htpc-kodi.service for the invoking user.
+#   htpc-services install-desktop   Install htpc-desktop.service for the invoking user.
+#   htpc-services install-steam     Install htpc-steam.service for the invoking user.
+#   htpc-services install-switch    Install htpc-switch and its polkit rule for the invoking user.
+#   htpc-services status            Show status of all three htpc-*.service units.
+
+script_dir() {
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+}
+
+require_root() {
+    if [[ "${EUID}" -ne 0 ]]; then
+        htpc_log_error "This command must be run as root."
+        exit 1
+    fi
+}
+
+target_user() {
+    : "${SUDO_USER:?Run this via sudo as the target (existing) user, not directly as root, e.g.: sudo bin/htpc-services install-kodi}"
+    printf '%s\n' "${SUDO_USER}"
+}
+
+cmd_install_kodi() {
+    require_root
+    htpc_service_install "htpc-kodi.service" "$(target_user)"
+}
+
+cmd_install_desktop() {
+    require_root
+    htpc_service_install "htpc-desktop.service" "$(target_user)"
+}
+
+cmd_install_steam() {
+    require_root
+    local user
+    user="$(target_user)"
+    htpc_service_install "htpc-steam.service" "${user}"
+    # cachyos-gamescope-autologin.service tries to pkexec-modify a display
+    # manager's autologin config on session exit. Irrelevant here since
+    # htpc-switch (not a display manager) controls session transitions.
+    htpc_user_unit_mask "cachyos-gamescope-autologin.service" "${user}"
+}
+
+cmd_install_switch() {
+    require_root
+    local user
+    user="$(target_user)"
+    htpc_switch_install
+    htpc_polkit_rule_install "${user}"
+}
+
+cmd_status() {
+    systemctl status --no-pager "${HTPC_SERVICE_UNITS[@]}" || true
+}
+
+usage() {
+    echo "Usage: $(basename "$0") {install-kodi|install-desktop|install-steam|install-switch|status}" >&2
+}
+
+main() {
+    local lib_dir
+    lib_dir="$(script_dir)/../lib"
+
+    # shellcheck source=../lib/log.sh
+    source "${lib_dir}/log.sh"
+    # shellcheck source=../lib/services.sh
+    source "${lib_dir}/services.sh"
+
+    local command="${1:-}"
+    shift || true
+
+    case "${command}" in
+        install-kodi)    cmd_install_kodi ;;
+        install-desktop) cmd_install_desktop ;;
+        install-steam)   cmd_install_steam ;;
+        install-switch)  cmd_install_switch ;;
+        status)          cmd_status ;;
+        *)
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
