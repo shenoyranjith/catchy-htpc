@@ -1,5 +1,5 @@
 [Unit]
-Description=CachyOS HTPC - Kodi session
+Description=catchy-htpc - Kodi session
 After=systemd-user-sessions.service getty@tty1.service plymouth-quit-wait.service sound.target
 Conflicts=getty@tty1.service htpc-steam.service htpc-desktop.service
 

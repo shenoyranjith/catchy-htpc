@@ -2,7 +2,7 @@
 
 ## Overview
 
-CachyOS HTPC transforms a fresh CachyOS KDE installation into a console-like HTPC.
+catchy-htpc transforms a fresh CachyOS KDE installation into a console-like HTPC.
 
 Core components:
 

@@ -1,6 +1,6 @@
-# CachyOS HTPC
+# catchy-htpc
 
-CachyOS HTPC converts a fresh installation of CachyOS KDE into an appliance-like HTPC.
+catchy-htpc converts a fresh installation of CachyOS KDE into an appliance-like HTPC.
 
 ## Goals
 

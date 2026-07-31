@@ -1,5 +1,5 @@
 [Unit]
-Description=CachyOS HTPC - KDE Desktop session
+Description=catchy-htpc - KDE Desktop session
 After=systemd-user-sessions.service getty@tty1.service plymouth-quit-wait.service sound.target
 Conflicts=getty@tty1.service htpc-kodi.service htpc-steam.service
 
