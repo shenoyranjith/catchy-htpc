@@ -31,6 +31,7 @@ These are system-level systemd units. No display manager is used to start them o
 ## Steam Gaming Mode (htpc-steam.service)
 
 - Packages: gamescope-session-cachyos, lib32-gamescope (official CachyOS repository).
+- Also installs mangohud and lib32-mangohud: these provide `mangoapp`, which is what actually renders the Quick Access Menu's "Performance Overlay" (FPS/CPU/GPU stats) under gamescope-session-cachyos. gamescope-session-cachyos passes gamescope the flag that enables this overlay, but without mangoapp installed there's nothing for that flag to render, so the overlay slider silently does nothing. Not a hard dependency of gamescope-session-cachyos itself (CachyOS bundles it separately, in its own `cachyos-gaming-applications` meta-package), so it's listed here explicitly.
 - ExecStart runs the package's start-gamescope-session entrypoint as the existing user.
 - The package's own SDDM-oriented autologin unit, cachyos-gamescope-autologin.service (a systemd --user unit), is masked for the existing user. It is not needed here and would otherwise attempt to modify SDDM configuration when the session exits.
 - The package's steamos-session-select script (/usr/bin/steamos-session-select) is replaced with a thin wrapper (bin/htpc-steamos-session-select in this repo):

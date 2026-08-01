@@ -17,7 +17,7 @@ bin/htpc-uninstall
 9. Remove installed Kodi add-ons and the htpc-kodi.desktop / htpc-steam.desktop shortcuts, both from the application launcher directory and from the user's Desktop folder.
 10. Remove only the favourites.xml entries added by the installer, preserving any other entries.
 11. Remove the installation record itself.
-12. Ask whether to remove packages installed by the installer (kodi, gamescope-session-cachyos, lib32-gamescope, snapper, grub-btrfs, inotify-tools).
+12. Ask whether to remove packages installed by the installer (kodi, gamescope-session-cachyos, lib32-gamescope, mangohud, lib32-mangohud, snapper, grub-btrfs, inotify-tools).
 13. Verify removal.
 14. Prompt for reboot.
 

@@ -80,6 +80,7 @@ Recovery is performed by rebooting into the snapshot from GRUB, then running `ht
 - kodi
 - gamescope-session-cachyos
 - lib32-gamescope
+- mangohud / lib32-mangohud (provides `mangoapp`, which renders Steam's Quick Access Menu "Performance Overlay" under gamescope-session-cachyos; not a hard dependency of that package itself, so it must be installed separately)
 - snapper
 - grub-btrfs
 - inotify-tools (required by grub-btrfsd)

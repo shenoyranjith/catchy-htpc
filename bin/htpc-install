@@ -12,7 +12,7 @@ set -euo pipefail
 # root -- the target user is determined from $SUDO_USER.
 
 HTPC_PROJECT_DIR="/opt/cachyos-htpc"
-HTPC_REQUIRED_PACKAGES=(kodi gamescope-session-cachyos lib32-gamescope snapper grub-btrfs inotify-tools)
+HTPC_REQUIRED_PACKAGES=(kodi gamescope-session-cachyos lib32-gamescope mangohud lib32-mangohud snapper grub-btrfs inotify-tools)
 
 script_dir() {
     cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
