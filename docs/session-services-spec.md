@@ -18,7 +18,14 @@ These are system-level systemd units. No display manager is used to start them o
 - Conflicts= and After= getty@tty1.service.
 - Conflicts= the other two htpc-*.service units, so systemd itself enforces single-session exclusivity in addition to htpc-switch.
 - Only htpc-switch starts or stops these units during normal operation.
-- Restart=on-success, so an app-initiated clean exit (Kodi's own "Exit", quitting Steam outright) relaunches that session instead of stranding the user on a blank tty1. This does not conflict with htpc-switch: systemd never applies Restart= to a unit stopped via `systemctl stop`, which is how htpc-switch always stops the outgoing session. A genuine crash (non-zero exit or signal) is not restarted, to avoid masking real failures behind a restart loop.
+- Steam and KDE Desktop use Restart=on-success, so an app-initiated clean
+  exit (quitting Steam outright, logging out of Plasma) relaunches that
+  session instead of stranding the user on a blank tty1. This does not
+  conflict with htpc-switch: systemd never applies Restart= to a unit
+  stopped via `systemctl stop`, which is how htpc-switch always stops the
+  outgoing session. A genuine crash (non-zero exit or signal) is not
+  restarted, to avoid masking real failures behind a restart loop. Kodi
+  handles the equivalent case differently -- see "Kodi" below.
 
 ## Kodi (htpc-kodi.service)
 
@@ -27,6 +34,7 @@ These are system-level systemd units. No display manager is used to start them o
 - Runs as the existing user, using that user's own Kodi profile and data.
 - SupplementaryGroups=input render: Kodi's GBM windowing opens /dev/input/event* directly via libinput rather than acquiring devices through logind's D-Bus hand-off (the mechanism KDE and gamescope use), so it needs real group membership to read them. Granted here rather than via a persistent usermod so it only applies to this session and is fully reverted by removing this unit.
 - Enabled by default so it starts automatically at boot.
+- Restart=no, plus `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`: Kodi exiting on its own (its own Exit, or a crash) lands on KDE Desktop rather than relaunching Kodi or stranding the user on a blank tty1. See "Exit Fallback" in [Session Manager Specification](session-manager-spec.md) for why this doesn't fight a deliberate switch away from Kodi (e.g. via the Steam Gaming Mode favourite).
 
 ## Steam Gaming Mode (htpc-steam.service)
 

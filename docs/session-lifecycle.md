@@ -41,6 +41,12 @@ If Steam fails:
 If KDE Desktop fails:
     Enter Fatal Error.
 
+If Kodi exits on its own (its own Exit/Quit, or a crash) with no switch
+already in progress:
+    Automatically perform the same Kodi -> Desktop transition above,
+    rather than leaving tty1 blank or relaunching Kodi. See the exit
+    fallback in [Session Manager Specification](session-manager-spec.md).
+
 ## Fatal Error
 
 - Stop attempting to start any graphical session.

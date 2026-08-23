@@ -1,6 +1,7 @@
 # Kodi Add-on Specification
 
-Provide Program Add-ons only.
+Provide Program Add-ons (`xbmc.python.script`) only; no plugins, no
+repositories.
 
 Required Add-ons
 
@@ -45,3 +46,11 @@ above `htpc_kodi_favourites_seed` in lib/kodi.sh for detail.
 
 - Add-on IDs: script.htpc.steam (Steam Gaming Mode), script.htpc.desktop (Desktop Mode). Standard Kodi Program Add-on layout (addon.xml + default.py), xbmc.python.script extension point.
 - default.py runs htpc-switch via subprocess.run, capturing stderr/stdout. On a non-zero exit, shows the captured message via xbmcgui.Dialog().notification(); on success, does nothing (Kodi is about to lose DRM master to the new session anyway).
+- script.htpc.steam declares `<provides>game</provides>` instead of the
+  default `executable`, so it is categorized under Kodi's Games section
+  (Game Add-ons) rather than Programs -- a natural fit for a Steam
+  shortcut, and the same technique real-world Kodi Steam-launcher add-ons
+  use (confirmed: `<provides>` is the only thing that decides Programs vs.
+  Games categorization; it has no effect on favourites, which reference an
+  add-on by ID directly regardless of category). script.htpc.desktop keeps
+  `executable`/Programs, since "KDE Desktop" has no game framing.

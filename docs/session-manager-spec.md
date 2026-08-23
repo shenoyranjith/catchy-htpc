@@ -11,6 +11,7 @@ Implementation: Bash.
 - htpc-switch kodi
 - htpc-switch steam
 - htpc-switch desktop
+- htpc-switch --exit-fallback \<target\> (internal; see "Exit Fallback" below)
 
 ## Responsibilities
 
@@ -48,6 +49,37 @@ htpc-switch re-execs itself as the user the htpc-*.service units are
 configured to run as (read back from the installed htpc-kodi.service unit)
 before doing anything else, so the `--user` dispatch always targets the
 right user's session bus.
+
+## Exit Fallback
+
+htpc-kodi.service runs `htpc-switch --exit-fallback desktop` as
+`ExecStopPost`, so that Kodi exiting on its own -- its own Exit/Quit, or a
+crash -- lands on KDE Desktop instead of leaving tty1 blank or (as
+`Restart=on-success` used to do) relaunching Kodi. This mode is not exposed
+as a user-facing command; it exists purely for this unit's ExecStopPost.
+
+This must not fire when Kodi is being stopped as *part of* a deliberate
+switch already dispatched by htpc-switch (e.g. Kodi -> Steam via a
+favourite), since that switch already knows where it is going and firing
+the fallback too would race a second, conflicting transition against it.
+`ExecStopPost` runs synchronously as part of the unit's stop job, which
+means any `systemctl stop htpc-kodi.service` call -- including the one
+htpc-switch's own worker issues when switching away from Kodi -- does not
+return until this same ExecStopPost has finished running. So at the moment
+ExecStopPost fires, an in-flight worker's own `htpc-switch-worker-*`
+transient unit (see "Self-Referential Invocation" above) is guaranteed to
+still be active if and only if that worker is the reason Kodi is stopping.
+The exit fallback checks for exactly that (`systemctl --user list-units
+'htpc-switch-worker-*' --state=active`) and skips itself if it finds one,
+running the actual fallback switch (via the same detached
+`systemd-run --user` worker dispatch, with `current=boot` since Kodi has
+already fully stopped by this point) only when it finds none.
+
+Steam and KDE Desktop do not have an equivalent ExecStopPost: unlike Kodi,
+neither is meant to be the thing you land on if it exits unexpectedly, and
+their own "switch away" paths (Steam's "Switch to Desktop" button, KDE's
+logout) are already user-facing invocations of htpc-switch, not
+spontaneous exits.
 
 ## Privilege Model
 

@@ -28,13 +28,18 @@ Environment=WINDOWING=gbm
 # reader use case exists on this appliance, so skip the bridge outright.
 Environment=NO_AT_BRIDGE=1
 ExecStart=/usr/bin/kodi-standalone
-# Kodi's own "Exit" quits the whole process cleanly (exit 0); without this,
-# that would strand the user on a blank tty1 with no running session.
-# Restart=on-success relaunches Kodi in that case, but does not fight
-# htpc-switch: a switch away stops this unit via systemctl, which systemd
-# never subjects to Restart=, and a genuine crash (non-zero exit/signal) is
-# left alone rather than restart-looping.
-Restart=on-success
+# Kodi's own "Exit" quits the whole process cleanly; without a fallback,
+# that would strand the user on a blank tty1 with no running session, and
+# so would a genuine crash. Restart=no plus ExecStopPost's exit-fallback
+# below lands on Desktop in either case instead of relaunching Kodi -- see
+# htpc_exit_fallback in htpc-switch. This does not fight a deliberate
+# switch away (e.g. Kodi -> Steam via a favourite): htpc-switch's own
+# worker stops this unit via systemctl as part of that switch, and does not
+# return from that call until this same ExecStopPost has finished running,
+# so htpc_switch_in_progress reliably sees that worker still active and
+# skips the fallback.
+Restart=no
+ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop
 
 [Install]
 WantedBy=graphical.target
