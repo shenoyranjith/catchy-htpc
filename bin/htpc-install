@@ -40,6 +40,36 @@ confirm() {
     [[ "${reply}" =~ ^[Yy]$ ]]
 }
 
+# Prompts for which session should start automatically at boot, defaulting
+# to whatever was chosen on a previous run (if any), or Kodi otherwise.
+# Accepts a number or the session name itself, case-insensitively, so a
+# previous choice printed back as the default can just be re-entered as
+# text too. Re-prompts on anything else instead of silently guessing.
+choose_boot_session() {
+    local previous default reply
+    previous="$(htpc_install_record_get "BOOT_SESSION")"
+    default="${previous:-kodi}"
+
+    {
+        echo
+        echo "Which session should start automatically at boot?"
+        echo "  1) kodi    -- Kodi (default)"
+        echo "  2) steam   -- Steam Gaming Mode"
+        echo "  3) desktop -- KDE Desktop"
+    } >&2
+
+    while true; do
+        read -r -p "Choice [1-3, current: ${default}]: " reply
+        reply="${reply:-${default}}"
+        case "${reply,,}" in
+            1|kodi)    printf 'kodi\n';    return 0 ;;
+            2|steam)   printf 'steam\n';   return 0 ;;
+            3|desktop) printf 'desktop\n'; return 0 ;;
+            *) echo "Please enter 1, 2, 3, kodi, steam, or desktop." >&2 ;;
+        esac
+    done
+}
+
 # Copies the project tree to a stable system location and re-execs from
 # there. See "Project Files" in installer-spec.md for why.
 step_bootstrap_project_files() {
@@ -132,7 +162,7 @@ step_snapshot() {
 }
 
 step_verify_installation() {
-    local user="$1" kodi_home home apps_dir desktop_dir ok=0
+    local user="$1" boot_session="$2" kodi_home home apps_dir desktop_dir ok=0
     kodi_home="$(htpc_kodi_home "${user}")"
     home="$(dirname "${kodi_home}")"
     apps_dir="${home}/.local/share/applications"
@@ -156,7 +186,7 @@ step_verify_installation() {
     check "htpc-kodi.service installed" systemctl cat htpc-kodi.service
     check "htpc-steam.service installed" systemctl cat htpc-steam.service
     check "htpc-desktop.service installed" systemctl cat htpc-desktop.service
-    check "htpc-kodi.service enabled" systemctl is-enabled --quiet htpc-kodi.service
+    check "htpc-${boot_session}.service enabled to start at boot" systemctl is-enabled --quiet "htpc-${boot_session}.service"
     check "steamos-session-select replaced" cmp -s "${HTPC_PROJECT_DIR}/bin/htpc-steamos-session-select" "${HTPC_STEAMOS_SESSION_SELECT_PATH}"
     check "Steam Gaming Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.steam/addon.xml"
     check "Desktop Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.desktop/addon.xml"
@@ -203,6 +233,7 @@ main() {
     step_install_recovery_command
 
     htpc_switch_install
+    htpc_kodi_launch_install
     htpc_polkit_rule_install "${user}"
     htpc_service_install "htpc-kodi.service" "${user}"
     htpc_service_install "htpc-steam.service" "${user}"
@@ -216,14 +247,17 @@ main() {
     htpc_kodi_favourites_seed "${user}"
     htpc_desktop_shortcuts_install "${user}"
 
-    systemctl enable htpc-kodi.service
+    local boot_session
+    boot_session="$(choose_boot_session)"
+    htpc_boot_session_set "${boot_session}"
+    htpc_install_record_set "BOOT_SESSION" "${boot_session}"
 
     htpc_install_record_set "TARGET_USER" "${user}"
     # shellcheck disable=SC2086 # intentional word-splitting of a newline-separated list
     htpc_install_record_append_unique "INSTALLED_PACKAGES" ${missing_packages}
 
     htpc_log_info "Verifying installation."
-    if step_verify_installation "${user}"; then
+    if step_verify_installation "${user}" "${boot_session}"; then
         htpc_log_info "Installation verified successfully."
     else
         htpc_log_error "Some checks failed; review the errors above before rebooting."
@@ -236,7 +270,7 @@ main() {
     if confirm "Reboot now to complete setup?" N; then
         systemctl reboot
     else
-        htpc_log_info "Reboot later to boot into Kodi."
+        htpc_log_info "Reboot later to boot into ${boot_session}."
     fi
 }
 

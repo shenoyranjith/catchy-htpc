@@ -37,6 +37,7 @@ target_user() {
 
 cmd_install_kodi() {
     require_root
+    htpc_kodi_launch_install
     htpc_service_install "htpc-kodi.service" "$(target_user)"
 }
 

@@ -5,7 +5,7 @@ appliance-like HTPC.
 
 ## Goals
 
-- Boot directly into Kodi.
+- Boot directly into the chosen session (Kodi by default; configurable at install time).
 - Seamlessly switch between Kodi, Steam Gaming Mode, and KDE Desktop.
 - Minimize desktop overhead while using Kodi.
 - Preserve the user's existing account and data.

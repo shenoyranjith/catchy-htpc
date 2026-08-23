@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Launches Kodi standalone, retrying on an unclean exit like the upstream
+# /usr/bin/kodi-standalone wrapper does -- but with a real delay between
+# attempts, unlike that wrapper's own near-immediate retries (~2s apart).
+#
+# Exists because Kodi's GBM windowing has been observed to fail on the
+# very first frame present after a session teardown on some NVIDIA
+# driver/kernel combinations (a std::queue::back() assertion in Kodi's own
+# GBM buffer-queue code, hit before a buffer has been produced yet), and
+# retrying instantly reproduces the same failure every time. Giving the
+# driver a few seconds to settle before retrying is worth testing before
+# concluding it's an unconditional bug; see session-services-spec.md.
+#
+# Kept as a small project-owned script (not a patch to the vendored
+# kodi-standalone, which a Kodi package update would silently overwrite).
+# Mirrors kodi-standalone's exit-code convention: 0 or 64-66 is a clean
+# exit and stops the retry loop immediately; anything else is a crash.
+#
+# Not meant to be run directly; installed as the ExecStart for
+# htpc-kodi.service. See lib/services.sh (htpc_kodi_launch_install).
+
+readonly HTPC_KODI_MAX_ATTEMPTS="${HTPC_KODI_MAX_ATTEMPTS:-3}"
+readonly HTPC_KODI_RETRY_DELAY_SECONDS="${HTPC_KODI_RETRY_DELAY_SECONDS:-8}"
+
+attempt=1
+while (( attempt <= HTPC_KODI_MAX_ATTEMPTS )); do
+    /usr/bin/kodi --standalone "$@"
+    ret=$?
+
+    if (( ret == 0 )) || { (( ret >= 64 )) && (( ret <= 66 )); }; then
+        exit "${ret}"
+    fi
+
+    echo "htpc-kodi-launch: kodi exited uncleanly (status ${ret}), attempt ${attempt}/${HTPC_KODI_MAX_ATTEMPTS}." >&2
+    if (( attempt < HTPC_KODI_MAX_ATTEMPTS )); then
+        sleep "${HTPC_KODI_RETRY_DELAY_SECONDS}"
+    fi
+    (( attempt++ ))
+done
+
+echo "htpc-kodi-launch: kodi failed ${HTPC_KODI_MAX_ATTEMPTS} times in a row; giving up." >&2
+exit 1

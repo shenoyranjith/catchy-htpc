@@ -52,39 +52,56 @@ right user's session bus.
 
 ## Exit Fallback
 
-htpc-kodi.service runs `htpc-switch --exit-fallback desktop` as
-`ExecStopPost`, so that Kodi exiting on its own -- its own Exit/Quit, or a
-crash -- lands on KDE Desktop instead of leaving tty1 blank or (as
-`Restart=on-success` used to do) relaunching Kodi. This mode is not exposed
-as a user-facing command; it exists purely for this unit's ExecStopPost.
+Each htpc-*.service unit runs `htpc-switch --exit-fallback <target>` as its
+own `ExecStopPost`, so that session exiting on its own -- its own Exit/Quit,
+a crash, or (now that any of the three can be the boot session; see "Boot
+Configuration" in [Installer Specification](installer-spec.md)) simply
+failing to start at boot -- lands somewhere useful instead of leaving tty1
+blank, relaunching itself (as `Restart=on-success` used to do for Steam and
+Desktop), or looping back into a session that just failed (Kodi). This mode
+is not exposed as a user-facing command; it exists purely for these units'
+ExecStopPost. The target differs per unit, matching the Recovery rules in
+[Session Lifecycle](session-lifecycle.md):
 
-This must not fire when Kodi is being stopped as *part of* a deliberate
+- htpc-kodi.service and htpc-steam.service both use `--exit-fallback desktop`: Kodi or Steam exiting on their own falls back to KDE Desktop.
+- htpc-desktop.service uses `--exit-fallback fatal`: Desktop is already the
+  last resort, so exiting on its own enters Fatal Error (a plain getty on
+  tty1, via `htpc_start_getty_fallback`) instead of falling back to another
+  session. This is the only target that isn't itself a session name; see
+  the "fatal" pseudo-target in `htpc_worker_main`.
+
+This must not fire when the system itself is shutting down or rebooting:
+stopping the active htpc-*.service unit is then just one step of that
+larger transaction, not a spontaneous exit, and the target user's own
+systemd --user manager (`user@<uid>.service`) is itself mid-teardown by
+that point too -- confirmed live, dispatching a fallback in this case
+reliably either fails outright (`systemd-run --user` errors with
+"$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined") or actively
+contends with the shutdown transaction already tearing that same manager
+down ("Transaction ... is destructive"). Checked via `systemctl
+is-system-running` == `stopping`, systemd's own state for exactly this.
+
+This must also not fire when a session is being stopped as *part of* a deliberate
 switch already dispatched by htpc-switch (e.g. Kodi -> Steam via a
 favourite), since that switch already knows where it is going and firing
 the fallback too would race a second, conflicting transition against it.
 `ExecStopPost` runs synchronously as part of the unit's stop job, which
-means any `systemctl stop htpc-kodi.service` call -- including the one
-htpc-switch's own worker issues when switching away from Kodi -- does not
+means any `systemctl stop` call against one of these units -- including the
+one htpc-switch's own worker issues when switching away from it -- does not
 return until this same ExecStopPost has finished running. So at the moment
 ExecStopPost fires, an in-flight worker's own `htpc-switch-worker-*`
 transient unit (see "Self-Referential Invocation" above) is guaranteed to
-still be active if and only if that worker is the reason Kodi is stopping.
-The exit fallback checks for exactly that (`systemctl --user list-units
-'htpc-switch-worker-*' --state=active`) and skips itself if it finds one,
-running the actual fallback switch (via the same detached
-`systemd-run --user` worker dispatch, with `current=boot` since Kodi has
-already fully stopped by this point) only when it finds none.
-
-Steam and KDE Desktop do not have an equivalent ExecStopPost: unlike Kodi,
-neither is meant to be the thing you land on if it exits unexpectedly, and
-their own "switch away" paths (Steam's "Switch to Desktop" button, KDE's
-logout) are already user-facing invocations of htpc-switch, not
-spontaneous exits.
+still be active if and only if that worker is the reason the unit is
+stopping. The exit fallback checks for exactly that (`systemctl --user
+list-units 'htpc-switch-worker-*' --state=active`) and skips itself if it
+finds one, running the actual fallback (via the same detached
+`systemd-run --user` worker dispatch, with `current=boot` since the session
+has already fully stopped by this point) only when it finds none.
 
 ## Privilege Model
 
 - Runs as the existing user, not root.
-- Uses a narrow polkit rule, installed by the installer, granting passwordless control of only the three htpc-*.service units.
+- Uses a narrow polkit rule, installed by the installer, granting passwordless control of only the three htpc-*.service units, plus getty@tty1.service for the Fatal Error fallback above.
 - No sudo or setuid binaries are required for normal operation.
 - If invoked as root, drops to the configured user itself rather than requiring the caller to do so; see "Self-Referential Invocation" above.
 

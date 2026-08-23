@@ -18,11 +18,15 @@ StandardError=journal
 Environment=NO_AT_BRIDGE=1
 ExecStart=/usr/bin/start-gamescope-session
 # Quitting Steam entirely (not via "Switch to Desktop", which goes through
-# the steamos-session-select wrapper to htpc-switch instead) exits this
-# process cleanly; Restart=on-success just relaunches Gaming Mode rather
-# than stranding the user on a blank tty1. See htpc-kodi.service for why
-# this doesn't conflict with htpc-switch's own stop/start calls.
-Restart=on-success
+# the steamos-session-select wrapper to htpc-switch instead), or a crash,
+# falls back to Desktop rather than relaunching Gaming Mode or stranding
+# the user on a blank tty1 -- matching the "If Steam fails: Attempt to
+# start KDE Desktop" rule in session-lifecycle.md, and Kodi's own handling
+# (see htpc-kodi.service and htpc_exit_fallback in htpc-switch for why
+# Restart=no + ExecStopPost here doesn't fight htpc-switch's own stop/start
+# calls during a deliberate switch away from Steam).
+Restart=no
+ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop
 
 [Install]
 WantedBy=graphical.target

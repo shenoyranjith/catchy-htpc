@@ -26,6 +26,10 @@ htpc_steamos_session_select_source_path() {
     printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-steamos-session-select"
 }
 
+htpc_kodi_launch_source_path() {
+    printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-kodi-launch"
+}
+
 # Installs a unit file from systemd/<name> into /etc/systemd/system/<name>,
 # substituting __HTPC_USER__ for the given target user. Idempotent: only
 # writes and reloads systemd if the rendered file actually differs from
@@ -57,6 +61,28 @@ htpc_service_install() {
     systemctl daemon-reload
 
     htpc_log_info "Installed ${name} for user ${target_user}."
+}
+
+# Enables exactly one of the three htpc-*.service units to start
+# automatically at boot -- the session the installer prompted for -- and
+# disables the other two. Disabling the other two (rather than only
+# enabling the target) matters on a rerun with a different choice: without
+# it, the previously-chosen unit would stay enabled alongside the new one,
+# and systemd would attempt to start both at boot, immediately conflicting
+# via each unit's own Conflicts= on the other two. Does not start or stop
+# anything now; only affects the next boot.
+htpc_boot_session_set() {
+    local target="$1"
+    local unit
+
+    for unit in "${HTPC_SERVICE_UNITS[@]}"; do
+        if [[ "${unit}" == "htpc-${target}.service" ]]; then
+            systemctl enable "${unit}"
+            htpc_log_info "Enabled ${unit} to start at boot."
+        else
+            systemctl disable "${unit}" >/dev/null 2>&1 || true
+        fi
+    done
 }
 
 # Reverses htpc_service_install: stops (if running), disables, and removes
@@ -156,6 +182,39 @@ htpc_switch_install() {
 # Reverses htpc_switch_install.
 htpc_switch_uninstall() {
     local dest="${HTPC_BIN_DIR}/htpc-switch"
+
+    if [[ -f "${dest}" ]]; then
+        rm -f "${dest}"
+        htpc_log_info "Removed ${dest}."
+    fi
+}
+
+# Installs bin/htpc-kodi-launch to /usr/local/bin, used as htpc-kodi.service's
+# ExecStart in place of the vendored /usr/bin/kodi-standalone. See that
+# script's header for why. Idempotent.
+htpc_kodi_launch_install() {
+    local script dest
+
+    script="$(htpc_kodi_launch_source_path)"
+    dest="${HTPC_BIN_DIR}/htpc-kodi-launch"
+
+    if [[ ! -f "${script}" ]]; then
+        htpc_log_error "htpc-kodi-launch script not found at ${script}."
+        return 1
+    fi
+
+    if [[ -f "${dest}" ]] && cmp -s "${script}" "${dest}"; then
+        htpc_log_info "htpc-kodi-launch already installed and up to date."
+        return 0
+    fi
+
+    install -m 0755 "${script}" "${dest}"
+    htpc_log_info "Installed htpc-kodi-launch to ${dest}."
+}
+
+# Reverses htpc_kodi_launch_install.
+htpc_kodi_launch_uninstall() {
+    local dest="${HTPC_BIN_DIR}/htpc-kodi-launch"
 
     if [[ -f "${dest}" ]]; then
         rm -f "${dest}"

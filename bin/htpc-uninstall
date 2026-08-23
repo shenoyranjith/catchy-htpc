@@ -145,6 +145,7 @@ step_restore_steamos_session_select() {
 
 step_remove_session_manager_and_project_files() {
     htpc_switch_uninstall
+    htpc_kodi_launch_uninstall
 
     local recovery_dest="/usr/local/bin/htpc-recovery"
     if [[ -f "${recovery_dest}" ]]; then

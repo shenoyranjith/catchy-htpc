@@ -27,7 +27,11 @@ Environment=WINDOWING=gbm
 # ~10 accumulated over one afternoon of switching. No accessibility/screen
 # reader use case exists on this appliance, so skip the bridge outright.
 Environment=NO_AT_BRIDGE=1
-ExecStart=/usr/bin/kodi-standalone
+# htpc-kodi-launch wraps /usr/bin/kodi --standalone with the same clean-exit
+# retry convention as the vendored /usr/bin/kodi-standalone, but with a real
+# delay between retries instead of near-instant ones -- see its own header
+# for why (a GBM buffer-queue race on some NVIDIA driver/kernel combinations).
+ExecStart=/usr/local/bin/htpc-kodi-launch
 # Kodi's own "Exit" quits the whole process cleanly; without a fallback,
 # that would strand the user on a blank tty1 with no running session, and
 # so would a genuine crash. Restart=no plus ExecStopPost's exit-fallback

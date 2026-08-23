@@ -13,7 +13,7 @@
 9. Install Session Manager.
 10. Install Kodi add-ons.
 11. Install desktop shortcuts.
-12. Configure automatic boot into Kodi.
+12. Ask which session should start automatically at boot (Kodi, Steam Gaming Mode, or KDE Desktop) and configure it.
 13. Record installation state.
 14. Verify installation.
 15. Offer optional MakeMKV setup.
@@ -89,7 +89,7 @@ Package sourcing prefers official CachyOS/Arch repositories, but AUR or other so
 
 ## Session Manager Installation
 
-- Install htpc-switch and its systemd unit files: htpc-kodi.service, htpc-steam.service, htpc-desktop.service.
+- Install htpc-switch, htpc-kodi-launch, and the systemd unit files: htpc-kodi.service, htpc-steam.service, htpc-desktop.service.
 - Install a polkit rule scoping passwordless control of only these three units to the target user.
 - Install the `NO_AT_BRIDGE=1` environment.d drop-in for the target user's systemd --user manager, so D-Bus-activated helpers don't leak accessibility-bus units on every session switch. See "Accessibility Bus Cleanup" in [Session Services Specification](session-services-spec.md).
 - Disable and mask whichever display manager is currently configured (discovered via the display-manager.service alias, not hardcoded -- CachyOS KDE installs use plasmalogin.service, not sddm.service), recording its unit name and prior enabled/disabled state. Only disables and masks it for the next boot; does not stop it immediately, since the installer is typically run from within a live session driven by that same display manager.
@@ -115,8 +115,8 @@ into htpc-switch. See "Desktop Application Shortcuts" in [Session Services Speci
 
 ## Boot Configuration
 
-- Enable htpc-kodi.service so it starts automatically at boot.
-- No display manager is used. Boot proceeds directly from systemd into htpc-kodi.service.
+- Prompt for which session -- Kodi, Steam Gaming Mode, or KDE Desktop -- should start automatically at boot, defaulting to Kodi (or whatever was chosen on a previous run, if rerunning). Enable that session's unit and disable the other two, so exactly one is ever enabled; a rerun with a different choice cleanly switches which one that is instead of leaving the old one enabled alongside it.
+- No display manager is used. Boot proceeds directly from systemd into whichever htpc-*.service unit is enabled.
 
 ## Optional MakeMKV Setup
 
@@ -124,12 +124,15 @@ After verification, offer to run `bin/htpc-makemkv-setup` (see [MakeMKV Specific
 
 ## Installation Record
 
-Record the following, for later use by the uninstaller:
+Record the following, for later use by the uninstaller (and, for the boot
+session choice, to default to it again on a rerun instead of always
+re-defaulting to Kodi):
 
 - Target user.
 - Packages installed by the installer.
 - The display manager's unit name and its prior enabled/disabled state.
 - Installer snapshot name, if one was created.
+- Which session (kodi, steam, or desktop) was chosen to start at boot.
 
 ## Requirements
 

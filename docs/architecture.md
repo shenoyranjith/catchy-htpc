@@ -21,7 +21,7 @@ No display manager (SDDM) is used. Sessions are managed entirely through systemd
 
 ## Goals
 
-- Boot directly into Kodi.
+- Boot directly into the chosen session (Kodi by default; configurable at install time).
 - Use the existing user account.
 - Prefer well-maintained packages. Official CachyOS/Arch repositories are preferred, but AUR or other sources may be used where clearly better suited to a specific need.
 - Avoid modifying Kodi skins.

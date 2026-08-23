@@ -18,14 +18,7 @@ These are system-level systemd units. No display manager is used to start them o
 - Conflicts= and After= getty@tty1.service.
 - Conflicts= the other two htpc-*.service units, so systemd itself enforces single-session exclusivity in addition to htpc-switch.
 - Only htpc-switch starts or stops these units during normal operation.
-- Steam and KDE Desktop use Restart=on-success, so an app-initiated clean
-  exit (quitting Steam outright, logging out of Plasma) relaunches that
-  session instead of stranding the user on a blank tty1. This does not
-  conflict with htpc-switch: systemd never applies Restart= to a unit
-  stopped via `systemctl stop`, which is how htpc-switch always stops the
-  outgoing session. A genuine crash (non-zero exit or signal) is not
-  restarted, to avoid masking real failures behind a restart loop. Kodi
-  handles the equivalent case differently -- see "Kodi" below.
+- All three use Restart=no, plus their own `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback <target>`: an app-initiated clean exit (quitting Steam outright, logging out of Plasma, Kodi's own Exit) or a genuine crash lands on a useful fallback -- KDE Desktop for Kodi/Steam, Fatal Error for Desktop -- rather than relaunching the session that just exited or stranding the user on a blank tty1. This does not conflict with htpc-switch: `ExecStopPost` runs as part of *every* stop of the unit, including the one htpc-switch's own worker issues when deliberately switching away from it, so the fallback has to (and does) detect and skip that case. See "Exit Fallback" in [Session Manager Specification](session-manager-spec.md) for exactly how, and each unit's own `ExecStopPost` comment below for its specific target.
 
 ## Kodi (htpc-kodi.service)
 
@@ -33,13 +26,16 @@ These are system-level systemd units. No display manager is used to start them o
 - Runs Kodi standalone with GBM windowing, so Kodi owns DRM/KMS directly without a separate compositor.
 - Runs as the existing user, using that user's own Kodi profile and data.
 - SupplementaryGroups=input render: Kodi's GBM windowing opens /dev/input/event* directly via libinput rather than acquiring devices through logind's D-Bus hand-off (the mechanism KDE and gamescope use), so it needs real group membership to read them. Granted here rather than via a persistent usermod so it only applies to this session and is fully reverted by removing this unit.
-- Enabled by default so it starts automatically at boot.
-- Restart=no, plus `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`: Kodi exiting on its own (its own Exit, or a crash) lands on KDE Desktop rather than relaunching Kodi or stranding the user on a blank tty1. See "Exit Fallback" in [Session Manager Specification](session-manager-spec.md) for why this doesn't fight a deliberate switch away from Kodi (e.g. via the Steam Gaming Mode favourite).
+- Whether this unit is enabled to start automatically at boot (as opposed to htpc-steam.service or htpc-desktop.service) depends on the choice made during installation -- see "Boot Configuration" in [Installer Specification](installer-spec.md). Exactly one of the three is ever enabled at a time.
+- `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`: lands on KDE Desktop, per "Shared Behaviour" above.
+- ExecStart runs `bin/htpc-kodi-launch` (installed to `/usr/local/bin`) instead of the vendored `/usr/bin/kodi-standalone` directly. It wraps `kodi --standalone` with the same clean-exit retry convention (exit 0 or 64-66 stops retrying; anything else is a crash and gets retried, up to 3 attempts), but with a real delay between attempts (8s by default) instead of kodi-standalone's own near-instant ones. This exists because Kodi's GBM windowing has been observed to fail its very first frame present after a session teardown on some NVIDIA driver/kernel combinations -- a `std::queue::back()` assertion in Kodi's own GBM buffer-queue code (`CWinSystemGbm::FlipPage`), hit because no buffer has been produced yet -- and retrying instantly reproduced the same failure on every attempt. A project-owned script rather than a patch to kodi-standalone itself, since a Kodi package update would silently overwrite the latter.
 
 ## Steam Gaming Mode (htpc-steam.service)
 
 - Packages: gamescope-session-cachyos, lib32-gamescope (official CachyOS repository).
 - Also installs mangohud and lib32-mangohud: these provide `mangoapp`, which is what actually renders the Quick Access Menu's "Performance Overlay" (FPS/CPU/GPU stats) under gamescope-session-cachyos. gamescope-session-cachyos passes gamescope the flag that enables this overlay, but without mangoapp installed there's nothing for that flag to render, so the overlay slider silently does nothing. Not a hard dependency of gamescope-session-cachyos itself (CachyOS bundles it separately, in its own `cachyos-gaming-applications` meta-package), so it's listed here explicitly.
+- Whether this unit is enabled to start automatically at boot depends on the choice made during installation, same as Kodi above -- see "Boot Configuration" in [Installer Specification](installer-spec.md).
+- `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`: lands on KDE Desktop, per "Shared Behaviour" above.
 - ExecStart runs the package's start-gamescope-session entrypoint as the existing user.
 - The package's own SDDM-oriented autologin unit, cachyos-gamescope-autologin.service (a systemd --user unit), is masked for the existing user. It is not needed here and would otherwise attempt to modify SDDM configuration when the session exits.
 - The package's steamos-session-select script (/usr/bin/steamos-session-select) is replaced with a thin wrapper (bin/htpc-steamos-session-select in this repo):
@@ -55,6 +51,8 @@ These are system-level systemd units. No display manager is used to start them o
 - Uses the existing CachyOS KDE Plasma installation already present on the system.
 - ExecStart runs startplasma-wayland directly as the existing user.
 - No SDDM or other display manager is involved.
+- Whether this unit is enabled to start automatically at boot depends on the choice made during installation, same as Kodi above -- see "Boot Configuration" in [Installer Specification](installer-spec.md).
+- `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback fatal`: unlike Kodi/Steam, lands on Fatal Error rather than KDE Desktop -- Desktop is already the last resort, so there is nowhere else to fall back to. See "Exit Fallback" in [Session Manager Specification](session-manager-spec.md).
 
 ## Desktop Application Shortcuts
 
