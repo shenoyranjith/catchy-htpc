@@ -49,6 +49,7 @@ differs.
 - Whether this unit is enabled to start automatically at boot depends on the choice made during installation, same as Kodi above -- see "Boot Configuration" in [Installer Specification](installer-spec.md).
 - `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`: lands on KDE Desktop, per "Shared Behaviour" above.
 - ExecStart runs `bin/htpc-steam-launch` (installed to `/usr/local/bin`).
+- `Delegate=yes`: Steam's pressure-vessel/bwrap must create user namespaces. Without cgroup delegation, a system unit fails with `bwrap: Unexpected capabilities but not setuid` / `Steam now requires user namespaces to be enabled` even when the same gamescope+steam command works from a normal user console. Confirmed live on NVIDIA.
 - `/usr/bin/steamos-session-select` is the project's thin wrapper (bin/htpc-steamos-session-select):
   - gamescope -> htpc-switch steam
   - plasma -> htpc-switch kodi

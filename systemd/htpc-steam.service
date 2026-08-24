@@ -16,6 +16,14 @@ StandardError=journal
 # See htpc-kodi.service for why: avoids leaking a per-connection
 # at-spi2-registryd instance (Steam's Qt-based UI is a known trigger).
 Environment=NO_AT_BRIDGE=1
+# Steam's pressure-vessel/bwrap needs to create user namespaces. Under a
+# system unit without cgroup delegation that fails with:
+#   "bwrap: Unexpected capabilities but not setuid"
+#   "Steam now requires user namespaces to be enabled."
+# Confirmed live on NVIDIA when launching via this unit; the same
+# gamescope+steam command works from a normal user console (user.slice).
+# Delegate=yes is the systemd-side fix for userns inside the service cgroup.
+Delegate=yes
 # htpc-steam-launch: AMD uses start-gamescope-session; NVIDIA uses a
 # minimal `gamescope ... -- steam -steamdeck` (the full CachyOS session
 # script broke the Deck UI on NVIDIA -- see bin/htpc-steam-launch).
