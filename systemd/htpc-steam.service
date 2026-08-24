@@ -16,7 +16,10 @@ StandardError=journal
 # See htpc-kodi.service for why: avoids leaking a per-connection
 # at-spi2-registryd instance (Steam's Qt-based UI is a known trigger).
 Environment=NO_AT_BRIDGE=1
-ExecStart=/usr/bin/start-gamescope-session
+# htpc-steam-launch: AMD uses start-gamescope-session; NVIDIA uses a
+# minimal `gamescope ... -- steam -steamdeck` (the full CachyOS session
+# script broke the Deck UI on NVIDIA -- see bin/htpc-steam-launch).
+ExecStart=/usr/local/bin/htpc-steam-launch
 # Quitting Steam entirely (not via "Switch to Desktop", which goes through
 # the steamos-session-select wrapper to htpc-switch instead), or a crash,
 # falls back to Desktop rather than relaunching Gaming Mode or stranding

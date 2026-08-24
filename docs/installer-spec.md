@@ -89,9 +89,12 @@ on this project's own lib/ tree. This determines which of the two
 "Required Packages" / "Session Manager Installation" paths below apply.
 See "GPU-Dependent Unit Resolution" in [Session Manager Specification](session-manager-spec.md)
 and "Steam Gaming Mode" in [Session Services Specification](session-services-spec.md)
-for why NVIDIA is treated differently at all: a confirmed upstream
-gamescope regression corrupts the Steam overlay's display on current
-NVIDIA driver branches.
+for why NVIDIA is treated differently at all: the full
+`gamescope-session-cachyos` / `start-gamescope-session` path broke the
+Steam Deck UI on cold boot on this hardware, while a minimal
+`gamescope … -- steam -steamdeck` command works. NVIDIA therefore uses
+that minimal launch via `bin/htpc-steam-launch` instead of the CachyOS
+session package (and instead of the earlier Plasma Big Picture fold).
 
 ## Required Packages
 
@@ -106,20 +109,21 @@ AMD only, additionally:
 - lib32-gamescope
 - mangohud / lib32-mangohud (provides `mangoapp`, which renders Steam's Quick Access Menu "Performance Overlay" under gamescope-session-cachyos; not a hard dependency of that package itself, so it must be installed separately)
 
-None of the four AMD-only packages above are installed on NVIDIA; Steam
-Gaming Mode there needs nothing beyond Steam itself, already present on
-any CachyOS KDE gaming install.
+NVIDIA only, additionally:
+
+- gamescope
+- lib32-gamescope
 
 Package sourcing prefers official CachyOS/Arch repositories, but AUR or other sources may be used where clearly better suited to a specific need.
 
 ## Session Manager Installation
 
-- Install htpc-switch, htpc-kodi-launch, and the systemd unit files: htpc-kodi.service and htpc-desktop.service always; htpc-steam.service on AMD only (removed if previously installed, e.g. a rerun after switching from AMD to NVIDIA hardware).
-- Install a polkit rule scoping passwordless control of the htpc-*.service units to the target user (still references htpc-steam.service even on NVIDIA, where it's simply unused rather than causing any harm).
+- Install htpc-switch, htpc-kodi-launch, htpc-steam-launch, and all three systemd unit files (htpc-kodi.service, htpc-steam.service, htpc-desktop.service).
+- Install a polkit rule scoping passwordless control of the htpc-*.service units to the target user.
 - Install the `NO_AT_BRIDGE=1` environment.d drop-in for the target user's systemd --user manager, so D-Bus-activated helpers don't leak accessibility-bus units on every session switch. See "Accessibility Bus Cleanup" in [Session Services Specification](session-services-spec.md).
 - Disable and mask whichever display manager is currently configured (discovered via the display-manager.service alias, not hardcoded -- CachyOS KDE installs use plasmalogin.service, not sddm.service), recording its unit name and prior enabled/disabled state. Only disables and masks it for the next boot; does not stop it immediately, since the installer is typically run from within a live session driven by that same display manager.
-- AMD only: mask cachyos-gamescope-autologin.service, a systemd --user unit, for the target user, and replace /usr/bin/steamos-session-select with a wrapper that calls htpc-switch. Neither applies on NVIDIA -- gamescope-session-cachyos isn't installed there, so neither file exists in the first place. See [Session Services Specification](session-services-spec.md).
-- NVIDIA only: install the `/run/cachyos-htpc` tmpfiles.d drop-in, bin/htpc-steam-bigpicture-boot-marker, and the bin/htpc-steam-autostart KDE autostart entry (removed if previously installed, e.g. a rerun after switching from NVIDIA to AMD hardware). See "NVIDIA: folded into htpc-desktop.service" in [Session Services Specification](session-services-spec.md).
+- Install /usr/bin/steamos-session-select as the htpc-switch wrapper (replacing gamescope-session-cachyos's copy on AMD; installing fresh on NVIDIA). AMD only: also mask cachyos-gamescope-autologin.service. See [Session Services Specification](session-services-spec.md).
+- Remove any leftover v1.0.1 NVIDIA Plasma Big Picture wiring (tmpfiles.d drop-in, boot-marker, KDE autostart) if present from an earlier install.
 
 ## Kodi Add-on Installation
 
@@ -142,7 +146,6 @@ into htpc-switch. See "Desktop Application Shortcuts" in [Session Services Speci
 
 - Prompt for which session -- Kodi, Steam Gaming Mode, or KDE Desktop -- should start automatically at boot, defaulting to Kodi (or whatever was chosen on a previous run, if rerunning). Enable that session's unit (resolved via `htpc_session_unit_for`, same mapping htpc-switch itself uses) and disable the others, so exactly one is ever enabled; a rerun with a different choice cleanly switches which one that is instead of leaving the old one enabled alongside it.
 - No display manager is used. Boot proceeds directly from systemd into whichever htpc-*.service unit is enabled.
-- On NVIDIA, choosing "steam" enables htpc-desktop.service -- the same unit "desktop" would enable -- since there is no separate htpc-steam.service there. Which of the two was actually chosen is still recorded (see "Installation Record" below) and consulted at boot by that unit's own `ExecStartPre` (bin/htpc-steam-bigpicture-boot-marker) so that booting into "steam" still opens Big Picture. See [Session Services Specification](session-services-spec.md).
 
 ## Optional MakeMKV Setup
 
@@ -158,7 +161,7 @@ re-defaulting to Kodi):
 - Packages installed by the installer.
 - The display manager's unit name and its prior enabled/disabled state.
 - Installer snapshot name, if one was created.
-- Which session (kodi, steam, or desktop) was chosen to start at boot -- on NVIDIA, this is also what bin/htpc-steam-bigpicture-boot-marker reads at boot to distinguish "steam" from "desktop" when they share a unit; see "Boot Configuration" above.
+- Which session (kodi, steam, or desktop) was chosen to start at boot.
 
 The GPU vendor itself is recorded separately, at `/etc/cachyos-htpc/gpu-vendor` rather than in this file -- see "GPU Vendor Detection" above.
 

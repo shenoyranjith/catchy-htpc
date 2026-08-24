@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Launches Steam Gaming Mode for htpc-steam.service.
+#
+# AMD: execs the CachyOS gamescope-session-cachyos entrypoint
+# (/usr/bin/start-gamescope-session), unchanged from before.
+#
+# NVIDIA: runs a minimal gamescope + Steam Deck UI command that has been
+# confirmed to work on the primary HTPC when launched from a console:
+#   gamescope -w 3840 -h 2160 -r 60 -f -e -- steam -steamdeck
+# The earlier NVIDIA failure mode was the full start-gamescope-session /
+# gamescope-session-cachyos boot path (broken Deck UI), not gamescope
+# itself. This script deliberately skips that session glue.
+#
+# Width/height/refresh are overridable via HTPC_GAMESCOPE_WIDTH /
+# HTPC_GAMESCOPE_HEIGHT / HTPC_GAMESCOPE_REFRESH for other displays.
+# Set any of them to empty to omit that flag and let gamescope decide.
+#
+# Not meant to be run directly; installed as ExecStart for
+# htpc-steam.service. See lib/services.sh (htpc_steam_launch_install).
+
+readonly HTPC_GPU_VENDOR_FILE="/etc/cachyos-htpc/gpu-vendor"
+
+htpc_steam_log() {
+    printf 'htpc-steam-launch: %s\n' "$*" >&2
+    if command -v logger >/dev/null 2>&1; then
+        logger -t cachyos-htpc -- "htpc-steam-launch: $*" || true
+    fi
+}
+
+htpc_steam_gpu_vendor() {
+    if [[ -r "${HTPC_GPU_VENDOR_FILE}" ]]; then
+        cat "${HTPC_GPU_VENDOR_FILE}"
+    else
+        printf 'amd\n'
+    fi
+}
+
+htpc_steam_run_amd() {
+    if [[ ! -x /usr/bin/start-gamescope-session ]]; then
+        htpc_steam_log "start-gamescope-session not found; is gamescope-session-cachyos installed?"
+        return 1
+    fi
+    exec /usr/bin/start-gamescope-session "$@"
+}
+
+# NVIDIA: pin gamescope to the discrete GPU on hybrid AMD iGPU + NVIDIA
+# boxes when we can identify the nvidia DRM node. gamescope itself still
+# chooses outputs; this only prefers the right render device family via
+# the common NVIDIA prime env vars when a nvidia card is present.
+htpc_steam_run_nvidia() {
+    local width height refresh
+    local -a gs_cmd
+
+    if ! command -v gamescope >/dev/null 2>&1; then
+        htpc_steam_log "gamescope not found; is the gamescope package installed?"
+        return 1
+    fi
+    if ! command -v steam >/dev/null 2>&1; then
+        htpc_steam_log "steam not found."
+        return 1
+    fi
+
+    : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+    export XDG_RUNTIME_DIR
+    export XDG_SESSION_TYPE=wayland
+
+    width="${HTPC_GAMESCOPE_WIDTH-3840}"
+    height="${HTPC_GAMESCOPE_HEIGHT-2160}"
+    refresh="${HTPC_GAMESCOPE_REFRESH-60}"
+
+    gs_cmd=(/usr/bin/gamescope)
+    if [[ -n "${width}" ]]; then
+        gs_cmd+=(-w "${width}")
+    fi
+    if [[ -n "${height}" ]]; then
+        gs_cmd+=(-h "${height}")
+    fi
+    if [[ -n "${refresh}" ]]; then
+        gs_cmd+=(-r "${refresh}")
+    fi
+    gs_cmd+=(-f -e -- /usr/bin/steam -steamdeck)
+
+    htpc_steam_log "Starting: ${gs_cmd[*]}"
+    exec "${gs_cmd[@]}"
+}
+
+if [[ "$(htpc_steam_gpu_vendor)" == "nvidia" ]]; then
+    htpc_steam_run_nvidia "$@"
+else
+    htpc_steam_run_amd "$@"
+fi

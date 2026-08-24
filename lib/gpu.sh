@@ -1,29 +1,20 @@
 #!/usr/bin/env bash
-# GPU vendor detection and the NVIDIA "merged" Steam Gaming Mode / KDE
-# Desktop session. Requires lib/log.sh. See session-lifecycle.md and
-# session-services-spec.md for the full picture.
+# GPU vendor detection and Steam Gaming Mode package/session helpers.
+# Requires lib/log.sh. See session-lifecycle.md and session-services-spec.md.
 #
-# On AMD, Steam Gaming Mode runs gamescope-session-cachyos in its own
-# dedicated htpc-steam.service, unchanged from before. On NVIDIA, gamescope
-# has a confirmed upstream display-corruption bug with the Steam overlay
-# under embedded DRM mode (ValveSoftware/gamescope#1964, #2171) on current
-# driver branches, so NVIDIA machines skip gamescope entirely: there is no
-# htpc-steam.service at all, and "Steam Gaming Mode" instead means "the
-# existing htpc-desktop.service's own KDE Plasma session, with Steam
-# autostarting and immediately opening Big Picture (`steam -bigpicture`)". See htpc-switch's own header for how it
-# resolves this at runtime, and bin/htpc-steam-autostart /
-# bin/htpc-steam-bigpicture-boot-marker for how the two modes are actually
-# told apart within that one shared session.
+# Steam Gaming Mode always runs as dedicated htpc-steam.service:
+#   - AMD: gamescope-session-cachyos (start-gamescope-session)
+#   - NVIDIA: minimal gamescope + steam -steamdeck (bin/htpc-steam-launch)
+#
+# An earlier NVIDIA design folded Steam into htpc-desktop.service with a
+# Big Picture marker (htpc-steam-autostart / boot-marker / tmpfiles). Those
+# helpers remain here so a reinstall/uninstall can still remove leftovers
+# from v1.0.1; they are no longer installed on new NVIDIA setups.
 
 HTPC_GPU_VENDOR_FILE="/etc/cachyos-htpc/gpu-vendor"
 HTPC_STEAM_BIGPICTURE_TMPFILES_CONF="/etc/tmpfiles.d/cachyos-htpc.conf"
-# The environment file itself (/run/cachyos-htpc/environment, holding
-# HTPC_STEAM_BIGPICTURE=0|1) is never read or written from here -- only
-# from htpc-switch, bin/htpc-steam-autostart, and
-# bin/htpc-steam-bigpicture-boot-marker, each of which hardcodes the same
-# path independently (see htpc-switch's own header on why it can't just
-# source this file). Only the containing directory is this file's
-# concern, since it owns creating it via tmpfiles.d.
+# The environment file itself (/run/cachyos-htpc/environment) was only used
+# by the retired NVIDIA Big Picture path. Kept for uninstall cleanup.
 HTPC_STEAM_BIGPICTURE_RUNTIME_DIR="/run/cachyos-htpc"
 HTPC_STEAM_BOOT_MARKER_DEST="/usr/local/bin/htpc-steam-bigpicture-boot-marker"
 HTPC_STEAM_AUTOSTART_DEST="/usr/local/bin/htpc-steam-autostart"
@@ -63,8 +54,8 @@ htpc_gpu_is_nvidia() {
 
 # Prints "nvidia" or "amd" for the currently installed GPU. Only ever
 # distinguishes these two: any non-NVIDIA GPU (AMD, Intel, or none
-# detected) is treated as "amd" -- i.e. gamescope-based Steam Gaming Mode,
-# the long-standing default this project was built around.
+# detected) is treated as "amd" -- i.e. gamescope-session-cachyos Steam
+# Gaming Mode, the long-standing default this project was built around.
 htpc_gpu_vendor_detect() {
     if htpc_gpu_is_nvidia; then
         printf 'nvidia\n'
@@ -74,8 +65,8 @@ htpc_gpu_vendor_detect() {
 }
 
 # Persists the detected GPU vendor to a fixed system path so htpc-switch
-# (a self-contained script; see its own header) and the boot-marker script
-# below can read it back without depending on this project's lib/ tree
+# (a self-contained script; see its own header) and the steam launch
+# script can read it back without depending on this project's lib/ tree
 # still being present. Idempotent. Prints the detected vendor either way,
 # so callers can capture it in the same call.
 htpc_gpu_vendor_install() {
@@ -101,8 +92,7 @@ htpc_gpu_vendor_uninstall() {
     fi
 }
 
-# Reads back the persisted GPU vendor, defaulting to "amd" (the
-# unmodified, gamescope-based session layout) if it was never recorded.
+# Reads back the persisted GPU vendor, defaulting to "amd" if never recorded.
 htpc_gpu_vendor_get() {
     if [[ -r "${HTPC_GPU_VENDOR_FILE}" ]]; then
         cat "${HTPC_GPU_VENDOR_FILE}"
@@ -112,19 +102,13 @@ htpc_gpu_vendor_get() {
 }
 
 # Resolves a session name (kodi/steam/desktop) to the systemd unit that
-# actually backs it. Identical in spirit to htpc-switch's own
-# HTPC_SESSION_UNIT mapping (necessarily reimplemented there rather than
-# sourced from here -- see that script's header on why it must stay
-# self-contained): "steam" resolves to htpc-desktop.service itself on
-# NVIDIA, since there is no separate htpc-steam.service there.
+# backs it. Always htpc-<name>.service (Steam is never folded into Desktop).
 htpc_session_unit_for() {
     local target="$1"
-    if [[ "${target}" == "steam" ]] && [[ "$(htpc_gpu_vendor_get)" == "nvidia" ]]; then
-        printf 'htpc-desktop.service\n'
-    else
-        printf 'htpc-%s.service\n' "${target}"
-    fi
+    printf 'htpc-%s.service\n' "${target}"
 }
+
+# --- Retired v1.0.1 NVIDIA Big Picture helpers (uninstall / leftover cleanup only) ---
 
 # Installs the tmpfiles.d drop-in that creates /run/cachyos-htpc (owned by
 # the target user) on every boot, before any htpc-*.service unit starts.

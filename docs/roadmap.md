@@ -15,4 +15,4 @@
 ## Phase 2
 
 - [x] [MakeMKV / Blu-ray & UHD Blu-ray playback](makemkv-spec.md) (optional add-on)
-- [x] NVIDIA: Steam Gaming Mode without gamescope (folded into the KDE Desktop session; gamescope has a confirmed upstream Steam-overlay display-corruption regression on current NVIDIA driver branches -- see "Steam Gaming Mode" in [Session Services Specification](session-services-spec.md))
+- [x] NVIDIA: Steam Gaming Mode via minimal gamescope + Steam Deck UI (`bin/htpc-steam-launch`; the full gamescope-session-cachyos path broke the Deck UI on cold boot -- see "Steam Gaming Mode" in [Session Services Specification](session-services-spec.md))

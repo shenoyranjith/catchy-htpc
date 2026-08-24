@@ -14,7 +14,7 @@ bin/htpc-uninstall
 6. Remove the polkit rule and the `NO_AT_BRIDGE` environment.d drop-in installed for the target user.
 7. Restore the recorded display manager unit to its prior enabled/disabled state and unmask it.
 8. Restore /usr/bin/steamos-session-select and unmask cachyos-gamescope-autologin.service, if they were modified by the installer (AMD only; a no-op on NVIDIA, where neither was ever touched).
-9. Remove Session Manager (htpc-switch, htpc-kodi-launch, /usr/local/bin/htpc-recovery) and installed project files (/opt/cachyos-htpc).
+9. Remove Session Manager (htpc-switch, htpc-kodi-launch, htpc-steam-launch, /usr/local/bin/htpc-recovery) and installed project files (/opt/cachyos-htpc).
 10. Remove installed Kodi add-ons and the htpc-kodi.desktop / htpc-steam.desktop shortcuts, both from the application launcher directory and from the user's Desktop folder.
 11. Remove only the favourites.xml entries added by the installer, preserving any other entries.
 12. Remove the installation record itself.

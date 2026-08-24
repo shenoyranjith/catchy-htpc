@@ -30,6 +30,10 @@ htpc_kodi_launch_source_path() {
     printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-kodi-launch"
 }
 
+htpc_steam_launch_source_path() {
+    printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-steam-launch"
+}
+
 # Installs a unit file from systemd/<name> into /etc/systemd/system/<name>,
 # substituting __HTPC_USER__ for the given target user. Idempotent: only
 # writes and reloads systemd if the rendered file actually differs from
@@ -72,12 +76,8 @@ htpc_service_install() {
 # each unit's own Conflicts= on the other two. Does not start or stop
 # anything now; only affects the next boot.
 #
-# target's actual unit is resolved via htpc_session_unit_for (lib/gpu.sh):
-# on NVIDIA, "steam" resolves to htpc-desktop.service itself (there is no
-# separate htpc-steam.service there), so choosing "steam" here just leaves
-# htpc-desktop.service enabled, same as choosing "desktop" would -- see
-# bin/htpc-steam-bigpicture-boot-marker for how the two are still told
-# apart at boot, via BOOT_SESSION in the install record.
+# target's actual unit is resolved via htpc_session_unit_for (lib/gpu.sh).
+# Exactly one of htpc-kodi / htpc-steam / htpc-desktop is enabled.
 htpc_boot_session_set() {
     local target="$1"
     local target_unit unit
@@ -231,6 +231,39 @@ htpc_kodi_launch_uninstall() {
     fi
 }
 
+# Installs bin/htpc-steam-launch to /usr/local/bin, used as
+# htpc-steam.service's ExecStart. See that script's header for AMD vs
+# NVIDIA behaviour. Idempotent.
+htpc_steam_launch_install() {
+    local script dest
+
+    script="$(htpc_steam_launch_source_path)"
+    dest="${HTPC_BIN_DIR}/htpc-steam-launch"
+
+    if [[ ! -f "${script}" ]]; then
+        htpc_log_error "htpc-steam-launch script not found at ${script}."
+        return 1
+    fi
+
+    if [[ -f "${dest}" ]] && cmp -s "${script}" "${dest}"; then
+        htpc_log_info "htpc-steam-launch already installed and up to date."
+        return 0
+    fi
+
+    install -m 0755 "${script}" "${dest}"
+    htpc_log_info "Installed htpc-steam-launch to ${dest}."
+}
+
+# Reverses htpc_steam_launch_install.
+htpc_steam_launch_uninstall() {
+    local dest="${HTPC_BIN_DIR}/htpc-steam-launch"
+
+    if [[ -f "${dest}" ]]; then
+        rm -f "${dest}"
+        htpc_log_info "Removed ${dest}."
+    fi
+}
+
 # Installs a polkit rule granting the target user passwordless start/stop/
 # restart of only the three htpc-*.service units, substituting
 # __HTPC_USER__. Idempotent.
@@ -271,13 +304,11 @@ htpc_polkit_rule_uninstall() {
     fi
 }
 
-# Replaces gamescope-session-cachyos's steamos-session-select with a thin
-# wrapper that redirects Steam's own session-switching UI actions to
-# htpc-switch instead of its SDDM-oriented autologin logic. The original is
-# preserved via htpc_backup_file so the uninstaller can restore it.
-# Idempotent. Note: since this file is owned by the gamescope-session-cachyos
-# package, a future package update may silently overwrite it back to
-# upstream; re-run this after updating that package.
+# Installs bin/htpc-steamos-session-select as /usr/bin/steamos-session-select
+# so Steam's "Switch to Desktop" / Gaming Mode actions call htpc-switch.
+# On AMD, replaces gamescope-session-cachyos's script (backed up first).
+# On NVIDIA (no that package), installs the wrapper as a new file.
+# Idempotent.
 htpc_steamos_session_select_install() {
     local script dest
 
@@ -289,35 +320,43 @@ htpc_steamos_session_select_install() {
         return 1
     fi
 
-    if [[ ! -f "${dest}" ]]; then
-        htpc_log_error "No existing steamos-session-select found at ${dest}; is gamescope-session-cachyos installed?"
-        return 1
-    fi
-
-    if cmp -s "${script}" "${dest}"; then
+    if [[ -f "${dest}" ]] && cmp -s "${script}" "${dest}"; then
         htpc_log_info "steamos-session-select already replaced with the htpc wrapper."
         return 0
     fi
 
-    htpc_backup_file "${dest}"
-    install -m 0755 "${script}" "${dest}"
-    htpc_log_info "Replaced ${dest} with the htpc-switch wrapper."
+    if [[ -f "${dest}" ]]; then
+        htpc_backup_file "${dest}"
+        install -m 0755 "${script}" "${dest}"
+        htpc_log_info "Replaced ${dest} with the htpc-switch wrapper."
+    else
+        install -m 0755 "${script}" "${dest}"
+        htpc_log_info "Installed ${dest} (no prior package file to back up)."
+    fi
 }
 
-# Reverses htpc_steamos_session_select_install: restores the original
-# script from the .htpc-backup copy made before replacing it (see
-# htpc_backup_file), if one is present. Idempotent.
+# Reverses htpc_steamos_session_select_install: restores the original from
+# .htpc-backup when present; otherwise removes a wrapper we installed fresh
+# (NVIDIA path with no gamescope-session-cachyos original).
 htpc_steamos_session_select_restore() {
     local dest="${HTPC_STEAMOS_SESSION_SELECT_PATH}"
     local backup="${dest}.htpc-backup"
+    local script
+    script="$(htpc_steamos_session_select_source_path)"
 
-    if [[ ! -f "${backup}" ]]; then
-        htpc_log_info "No backup found for ${dest}; leaving it as-is (may not have been replaced, or was already restored)."
+    if [[ -f "${backup}" ]]; then
+        mv -f "${backup}" "${dest}"
+        htpc_log_info "Restored original ${dest} from backup."
         return 0
     fi
 
-    mv -f "${backup}" "${dest}"
-    htpc_log_info "Restored original ${dest} from backup."
+    if [[ -f "${dest}" ]] && [[ -f "${script}" ]] && cmp -s "${script}" "${dest}"; then
+        rm -f "${dest}"
+        htpc_log_info "Removed project-installed ${dest}."
+        return 0
+    fi
+
+    htpc_log_info "No backup found for ${dest}; leaving it as-is."
 }
 
 # Installs a systemd environment.d drop-in disabling the AT-SPI

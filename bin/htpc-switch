@@ -5,12 +5,11 @@ set -euo pipefail
 # transition rules in session-lifecycle.md and applying the recovery rules
 # if the destination session fails to start. See session-manager-spec.md.
 #
-# On AMD, these three map to three distinct htpc-*.service units. On
-# NVIDIA (see htpc_steam_merged_with_desktop below), "steam" and "desktop"
-# are the same htpc-desktop.service, and switching between just the two of
-# them toggles HTPC_STEAM_BIGPICTURE plus (for "steam") a direct
-# `steam -bigpicture` launch instead of restarting anything -- see
-# htpc_bigpicture_toggle_only.
+# All three map to distinct htpc-*.service units on every GPU. Steam Gaming
+# Mode is always htpc-steam.service (AMD: start-gamescope-session; NVIDIA:
+# minimal gamescope + steam -steamdeck -- see bin/htpc-steam-launch). An
+# earlier NVIDIA design merged steam into htpc-desktop.service with a Big
+# Picture marker; that path is retired (helpers below are unused).
 #
 # Runs as the existing user (not root). A polkit rule installed alongside
 # this script grants passwordless start/stop/restart of only the three
@@ -79,30 +78,19 @@ htpc_gpu_vendor() {
     fi
 }
 
-# True when Steam Gaming Mode and KDE Desktop are the same underlying
-# systemd unit -- NVIDIA only. gamescope has a confirmed upstream
-# display-corruption bug with the Steam overlay on current NVIDIA driver
-# branches (ValveSoftware/gamescope#1964, #2171), so NVIDIA machines have
-# no dedicated htpc-steam.service at all: HTPC_SESSION_UNIT[steam] and
-# HTPC_SESSION_UNIT[desktop] below both resolve to htpc-desktop.service,
-# whose own KDE Plasma session autostarts Steam unconditionally (see
-# bin/htpc-steam-autostart) and, when this is true, "steam" vs "desktop"
-# is tracked via HTPC_STEAM_BIGPICTURE instead of which unit is
-# active (see htpc_current_session).
+# Retired: previously true on NVIDIA when Steam Gaming Mode was folded into
+# Plasma Big Picture. Always false now -- steam is htpc-steam.service on
+# every GPU (see bin/htpc-steam-launch). Big Picture helpers below stay so
+# a partial upgrade cannot call missing functions; they are never reached.
 htpc_steam_merged_with_desktop() {
-    [[ "$(htpc_gpu_vendor)" == "nvidia" ]]
+    return 1
 }
 
 declare -A HTPC_SESSION_UNIT=(
     [kodi]="htpc-kodi.service"
+    [steam]="htpc-steam.service"
     [desktop]="htpc-desktop.service"
 )
-if htpc_steam_merged_with_desktop; then
-    HTPC_SESSION_UNIT[steam]="htpc-desktop.service"
-else
-    HTPC_SESSION_UNIT[steam]="htpc-steam.service"
-fi
-
 # Reads/writes HTPC_STEAM_BIGPICTURE in /run/cachyos-htpc/environment --
 # "1" means Steam Gaming Mode (open Big Picture), "0" or absent means
 # Desktop Mode. A real KEY=VALUE environment file rather than a raw 0/1
@@ -130,26 +118,20 @@ htpc_bigpicture_marker_set() {
 
 # Prints the name of the currently active session, or "boot" if none of the
 # htpc-*.service units are active (matching the Boot state in
-# session-lifecycle.md). On NVIDIA, htpc-desktop.service being active is
-# ambiguous between "steam" and "desktop" (see htpc_steam_merged_with_
-# desktop above), disambiguated via the Big Picture marker.
+# session-lifecycle.md).
 htpc_current_session() {
     if systemctl is-active --quiet "${HTPC_SESSION_UNIT[kodi]}"; then
         printf 'kodi\n'
         return 0
     fi
 
-    if systemctl is-active --quiet "${HTPC_SESSION_UNIT[desktop]}"; then
-        if htpc_steam_merged_with_desktop && [[ "$(htpc_bigpicture_marker_get)" == "1" ]]; then
-            printf 'steam\n'
-        else
-            printf 'desktop\n'
-        fi
+    if systemctl is-active --quiet "${HTPC_SESSION_UNIT[steam]}"; then
+        printf 'steam\n'
         return 0
     fi
 
-    if ! htpc_steam_merged_with_desktop && systemctl is-active --quiet "${HTPC_SESSION_UNIT[steam]}"; then
-        printf 'steam\n'
+    if systemctl is-active --quiet "${HTPC_SESSION_UNIT[desktop]}"; then
+        printf 'desktop\n'
         return 0
     fi
 
@@ -244,14 +226,12 @@ htpc_cleanup_accessibility_bus() {
 # units are not children of htpc-desktop.service's cgroup -- Plasma
 # launches them under the long-lived systemd --user manager -- so
 # `systemctl stop htpc-desktop.service` alone leaves kwin holding DRM/KMS.
-# The next Kodi session needs that DRM free whether it takes it via GBM
-# (AMD) or via its own kiosk kwin_wayland (NVIDIA -- see
-# bin/htpc-kodi-launch). Same root cause as the earlier NVIDIA Big Picture
-# teardown hang; here we just need Plasma's compositor gone before Kodi
-# starts.
+# The next exclusive DRM client (Kodi GBM / kiosk kwin, or gamescope for
+# Steam) needs that display free. Same root cause as the earlier NVIDIA
+# Big Picture teardown hang.
 #
 # Waits briefly for kwin to actually exit so the DRM hand-off is not a
-# race against the next compositor/Kodi startup.
+# race against the next compositor startup.
 htpc_cleanup_plasma_session() {
     systemctl --user stop plasma-workspace.target 2>/dev/null || true
 
@@ -366,15 +346,11 @@ htpc_worker_main() {
         # have connected yet).
         htpc_cleanup_accessibility_bus
 
-        # Leaving a Plasma-backed session (plain Desktop always; Steam
-        # Gaming Mode on NVIDIA too) for Kodi: free DRM/KMS before the
-        # Kodi session's own compositor / GBM path takes it. Harmless
-        # no-op if Plasma was never up.
-        if [[ "${target}" == "kodi" ]] && { [[ "${current}" == "desktop" ]] || [[ "${current}" == "steam" ]]; }; then
-            htpc_log_info "Ensuring Plasma has fully released the display before starting Kodi."
+        # Leaving Desktop for Kodi or Steam: free DRM/KMS before the next
+        # exclusive compositor takes it. Harmless no-op if Plasma was never up.
+        if [[ "${current}" == "desktop" ]] && { [[ "${target}" == "kodi" ]] || [[ "${target}" == "steam" ]]; }; then
+            htpc_log_info "Ensuring Plasma has fully released the display before starting ${target}."
             htpc_cleanup_plasma_session
-            # Brief settle after the compositor is gone before the next
-            # DRM client (AMD GBM or NVIDIA kiosk kwin) starts.
             sleep 2
         fi
     fi
@@ -382,20 +358,6 @@ htpc_worker_main() {
     if [[ "${target}" == "fatal" ]]; then
         htpc_start_getty_fallback
         return
-    fi
-
-    # Set before starting: on NVIDIA this is the unit that is *about to
-    # start fresh* (from Kodi, or as a boot/exit-fallback target), so
-    # bin/htpc-steam-autostart needs the right value in place the moment
-    # its own KDE Plasma session comes up. Not reached for a target
-    # already running (see htpc_bigpicture_toggle_only / main()'s own
-    # fast path below), so this never fights that path.
-    if htpc_steam_merged_with_desktop && { [[ "${target}" == "steam" ]] || [[ "${target}" == "desktop" ]]; }; then
-        if [[ "${target}" == "steam" ]]; then
-            htpc_bigpicture_marker_set "1"
-        else
-            htpc_bigpicture_marker_set "0"
-        fi
     fi
 
     if ! htpc_start_with_recovery "${target}"; then
