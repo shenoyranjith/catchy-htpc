@@ -66,7 +66,7 @@ step_relocate_if_needed() {
 source_libs() {
     local lib_dir="$1"
     local lib
-    for lib in log backup checks packages btrfs snapshot services kodi display_manager desktop_shortcuts install_record; do
+    for lib in log backup checks packages btrfs snapshot services gpu kodi display_manager desktop_shortcuts install_record; do
         # shellcheck disable=SC1090
         source "${lib_dir}/${lib}.sh"
     done
@@ -129,6 +129,20 @@ step_remove_services() {
     for unit in "${HTPC_SERVICE_UNITS[@]}"; do
         htpc_service_uninstall "${unit}"
     done
+}
+
+# Reverses the NVIDIA-only artifacts from lib/gpu.sh (see its own header):
+# the runtime-dir tmpfiles.d config/marker, the boot-marker script, the
+# autostart script/desktop entry, and the recorded GPU vendor itself.
+# Every one of these is already a no-op if never installed (this system
+# may have been AMD all along), so this is safe to call unconditionally
+# rather than needing to re-detect the GPU vendor first.
+step_remove_gpu_artifacts() {
+    local target_user="$1"
+    htpc_steam_bigpicture_runtime_dir_uninstall
+    htpc_steam_bigpicture_boot_marker_uninstall
+    htpc_steam_autostart_uninstall "${target_user}"
+    htpc_gpu_vendor_uninstall
 }
 
 step_remove_polkit_and_environment() {
@@ -212,6 +226,11 @@ step_verify_removal() {
     check "htpc-kodi.service removed" bash -c "! systemctl cat htpc-kodi.service >/dev/null 2>&1"
     check "htpc-steam.service removed" bash -c "! systemctl cat htpc-steam.service >/dev/null 2>&1"
     check "htpc-desktop.service removed" bash -c "! systemctl cat htpc-desktop.service >/dev/null 2>&1"
+    check "GPU vendor record removed" bash -c "[[ ! -f '${HTPC_GPU_VENDOR_FILE}' ]]"
+    check "Steam Gaming Mode runtime dir tmpfiles.d config removed" bash -c "[[ ! -f '${HTPC_STEAM_BIGPICTURE_TMPFILES_CONF}' ]]"
+    check "htpc-steam-bigpicture-boot-marker removed" bash -c "[[ ! -e '${HTPC_STEAM_BOOT_MARKER_DEST}' ]]"
+    check "htpc-steam-autostart removed" bash -c "[[ ! -e '${HTPC_STEAM_AUTOSTART_DEST}' ]]"
+    check "htpc-steam-autostart.desktop removed" bash -c "[[ ! -f '${home}/.config/autostart/htpc-steam-autostart.desktop' ]]"
     check "Steam Gaming Mode add-on removed" bash -c "[[ ! -d '${kodi_home}/addons/script.htpc.steam' ]]"
     check "Desktop Mode add-on removed" bash -c "[[ ! -d '${kodi_home}/addons/script.htpc.desktop' ]]"
     check "launcher shortcuts removed" bash -c "[[ ! -f '${apps_dir}/htpc-kodi.desktop' && ! -f '${apps_dir}/htpc-steam.desktop' ]]"
@@ -252,6 +271,8 @@ main() {
     step_stop_active_session
 
     step_remove_services
+
+    step_remove_gpu_artifacts "${target_user}"
 
     step_remove_polkit_and_environment "${target_user}"
 

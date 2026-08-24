@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Run as htpc-desktop.service's own ExecStartPre (`-` prefixed there, so
+# any failure here is ignored rather than blocking Plasma from starting).
+#
+# Only meaningful on NVIDIA -- see lib/gpu.sh's own header for why NVIDIA
+# has no separate gamescope-based htpc-steam.service, and instead uses
+# this same KDE Plasma session for both "Desktop Mode" and "Steam Gaming
+# Mode", distinguished only by HTPC_STEAM_BIGPICTURE in
+# /run/cachyos-htpc/environment (see bin/htpc-steam-autostart).
+#
+# htpc-switch itself always writes a definite HTPC_STEAM_BIGPICTURE=0 or
+# =1 there immediately before starting or toggling into this session (see
+# its own header), so the only time it is genuinely absent here is a cold
+# boot -- nothing else has run yet to have set it. In that case only, this
+# derives the correct value from BOOT_SESSION (see "Boot Configuration" in
+# installer-spec.md), so booting straight into Steam Gaming Mode opens Big
+# Picture immediately instead of landing on a plain desktop.
+#
+# Self-contained by design, like htpc-switch: reads the two fixed system
+# paths it needs directly rather than sourcing this project's lib/ tree,
+# so it keeps working even if that checkout is gone.
+
+set -uo pipefail
+
+HTPC_GPU_VENDOR_FILE="/etc/cachyos-htpc/gpu-vendor"
+HTPC_STEAM_BIGPICTURE_ENV="/run/cachyos-htpc/environment"
+HTPC_INSTALL_RECORD_PATH="/var/lib/cachyos-htpc/install-record"
+
+[[ -r "${HTPC_GPU_VENDOR_FILE}" ]] || exit 0
+[[ "$(cat "${HTPC_GPU_VENDOR_FILE}")" == "nvidia" ]] || exit 0
+
+# Already set for this boot -- either htpc-switch itself, or an earlier
+# run of this same script this boot -- leave it alone.
+[[ -f "${HTPC_STEAM_BIGPICTURE_ENV}" ]] && exit 0
+
+boot_session="desktop"
+if [[ -r "${HTPC_INSTALL_RECORD_PATH}" ]]; then
+    value="$(sed -n 's|^BOOT_SESSION=||p' "${HTPC_INSTALL_RECORD_PATH}" | tail -n1)"
+    [[ -n "${value}" ]] && boot_session="${value}"
+fi
+
+if [[ "${boot_session}" == "steam" ]]; then
+    printf 'HTPC_STEAM_BIGPICTURE=1\n' > "${HTPC_STEAM_BIGPICTURE_ENV}"
+else
+    printf 'HTPC_STEAM_BIGPICTURE=0\n' > "${HTPC_STEAM_BIGPICTURE_ENV}"
+fi

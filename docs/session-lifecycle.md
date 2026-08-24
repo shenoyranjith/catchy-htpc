@@ -8,6 +8,17 @@
 - KDE Desktop
 - Fatal Error
 
+These states, and every transition/recovery rule below, are the same on
+AMD and NVIDIA hardware -- htpc-switch always accepts kodi/steam/desktop
+and enforces the same rules regardless of GPU vendor. What differs is only
+*how* Steam Gaming Mode and KDE Desktop are actually realized: on AMD they
+are two separate systemd units (gamescope vs. plain Plasma); on NVIDIA
+they are the exact same running KDE Plasma session (Steam autostarts with
+it either way), distinguished only by whether Steam has additionally been
+told to open Big Picture. See [Session Manager Specification](session-manager-spec.md)
+and [Session Services Specification](session-services-spec.md) for why,
+and how switching between them on NVIDIA skips restarting anything.
+
 ## Valid Transitions
 
 Boot -> Kodi/Steam/Desktop, whichever was chosen at install time (see "Boot Configuration" in [Installer Specification](installer-spec.md)); exactly one of the three is ever enabled to start automatically.

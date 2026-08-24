@@ -22,6 +22,70 @@ Implementation: Bash.
 - Record transition logs via journald.
 - Recover to KDE Desktop when possible; if KDE Desktop also fails to start, enter Fatal Error (see [Session Lifecycle](session-lifecycle.md)).
 
+## GPU-Dependent Unit Resolution
+
+htpc-switch reads the GPU vendor recorded at install time
+(`/etc/cachyos-htpc/gpu-vendor`, written by `htpc_gpu_vendor_install` in
+lib/gpu.sh) to resolve "steam" to the unit that actually backs it:
+
+- AMD (or the vendor file missing/unreadable): "steam" resolves to its own
+  htpc-steam.service, exactly as before.
+- NVIDIA: "steam" resolves to htpc-desktop.service itself -- there is no
+  separate htpc-steam.service on NVIDIA at all (gamescope has a confirmed
+  upstream display-corruption bug with the Steam overlay on current NVIDIA
+  driver branches; see [Session Services Specification](session-services-spec.md)).
+  Steam autostarts with that same KDE Plasma session unconditionally, and
+  "Steam Gaming Mode" vs. "KDE Desktop" becomes a question of whether Steam
+  has additionally been told to open Big Picture via
+  `HTPC_STEAM_BIGPICTURE=1` in `/run/cachyos-htpc/environment` rather than
+  which unit is running.
+
+This mapping is duplicated (not sourced from lib/gpu.sh) in three places
+that must each keep working standalone: htpc-switch itself, and the
+`htpc_session_unit_for` helper in lib/services.sh used by the installer's
+own boot-configuration step. See htpc-switch's own header for why it
+can't just source the project's lib/ tree.
+
+Because "steam" and "desktop" can be the *same* unit on NVIDIA,
+`htpc_current_session` cannot tell them apart just by checking which unit
+is active in that case; it additionally reads `HTPC_STEAM_BIGPICTURE` from
+the same environment file to disambiguate.
+
+## Toggling Between Steam Gaming Mode and KDE Desktop on NVIDIA
+
+When htpc-desktop.service is already running (regardless of which of the
+two logical modes it's currently in), switching between "steam" and
+"desktop" does **not** restart the session at all -- there would be
+nothing to gain from bouncing an already-running KDE Plasma session (with
+Steam already up in it) just to change whether Big Picture is open.
+Instead, `htpc_bigpicture_toggle_only` detects this case and runs it
+**in-process** (not via `systemd-run --user`): we are not stopping the
+session, so there is no self-kill risk, and a transient user unit often
+lacks `WAYLAND_DISPLAY`/`DISPLAY` from the live Plasma session -- which
+made the Desktop shortcut look like a no-op. That path:
+
+- Entering "steam" (including a second `htpc-switch steam` while already
+  marked as Steam Gaming Mode): sets `HTPC_STEAM_BIGPICTURE=1` and opens
+  Big Picture. Exiting Big Picture or quitting Steam does not change the
+  marker, so a later Desktop shortcut / add-on click would otherwise look
+  like "already running steam" and do nothing. How Steam is told to open
+  Big Picture depends on whether it is still running, confirmed live:
+  - Steam not running: `steam -bigpicture` (startup flag). Passing
+    `steam://open/bigpicture` as the first launch argument instead showed
+    Steam's "needs to be online" dialog.
+  - Steam already running in desktop UI (user exited Big Picture):
+    `steam steam://open/bigpicture`. A second `steam -bigpicture` only
+    raises the existing desktop window and never switches back to Big
+    Picture.
+- Entering "desktop": sets `HTPC_STEAM_BIGPICTURE=0`. Nothing else happens -- closing
+  Big Picture (or quitting Steam entirely) is deliberately not treated as
+  a session-level event; see "Steam Gaming Mode" in
+  [Session Services Specification](session-services-spec.md).
+
+A transition into or out of "kodi" always goes through the normal
+stop/start path regardless of GPU vendor, since Kodi is always its own
+separate unit.
+
 ## Self-Referential Invocation
 
 htpc-switch is routinely invoked from *within* the session it is switching

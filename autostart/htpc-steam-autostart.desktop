@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=HTPC Steam Autostart
+Comment=Starts Steam (and, in Steam Gaming Mode, Big Picture) with this KDE Plasma session
+Exec=/usr/local/bin/htpc-steam-autostart
+X-KDE-autostart-phase=2
+NoDisplay=true

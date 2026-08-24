@@ -10,16 +10,17 @@ bin/htpc-uninstall
 2. Ask whether to create a snapshot before uninstalling, using the same mechanism as the installer.
 3. Stop the currently active htpc-*.service, if any.
 4. Disable and remove htpc-kodi.service, htpc-steam.service, htpc-desktop.service.
-5. Remove the polkit rule and the `NO_AT_BRIDGE` environment.d drop-in installed for the target user.
-6. Restore the recorded display manager unit to its prior enabled/disabled state and unmask it.
-7. Restore /usr/bin/steamos-session-select and unmask cachyos-gamescope-autologin.service, if they were modified by the installer.
-8. Remove Session Manager (htpc-switch, htpc-kodi-launch, /usr/local/bin/htpc-recovery) and installed project files (/opt/cachyos-htpc).
-9. Remove installed Kodi add-ons and the htpc-kodi.desktop / htpc-steam.desktop shortcuts, both from the application launcher directory and from the user's Desktop folder.
-10. Remove only the favourites.xml entries added by the installer, preserving any other entries.
-11. Remove the installation record itself.
-12. Ask whether to remove packages installed by the installer (kodi, gamescope-session-cachyos, lib32-gamescope, mangohud, lib32-mangohud, snapper, grub-btrfs, inotify-tools).
-13. Verify removal.
-14. Prompt for reboot.
+5. Remove the NVIDIA-only GPU artifacts, if present: the recorded GPU vendor, the `/run/cachyos-htpc` tmpfiles.d config, bin/htpc-steam-bigpicture-boot-marker, and the bin/htpc-steam-autostart script/KDE autostart entry. Every one of these is already a no-op if this system was AMD all along, so this always runs unconditionally rather than needing to re-detect the GPU vendor first.
+6. Remove the polkit rule and the `NO_AT_BRIDGE` environment.d drop-in installed for the target user.
+7. Restore the recorded display manager unit to its prior enabled/disabled state and unmask it.
+8. Restore /usr/bin/steamos-session-select and unmask cachyos-gamescope-autologin.service, if they were modified by the installer (AMD only; a no-op on NVIDIA, where neither was ever touched).
+9. Remove Session Manager (htpc-switch, htpc-kodi-launch, /usr/local/bin/htpc-recovery) and installed project files (/opt/cachyos-htpc).
+10. Remove installed Kodi add-ons and the htpc-kodi.desktop / htpc-steam.desktop shortcuts, both from the application launcher directory and from the user's Desktop folder.
+11. Remove only the favourites.xml entries added by the installer, preserving any other entries.
+12. Remove the installation record itself.
+13. Ask whether to remove packages installed by the installer (kodi, snapper, grub-btrfs, inotify-tools always; gamescope-session-cachyos, lib32-gamescope, mangohud, lib32-mangohud too if this was an AMD install).
+14. Verify removal.
+15. Prompt for reboot.
 
 ## Target User
 

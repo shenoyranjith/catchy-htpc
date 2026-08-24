@@ -17,6 +17,12 @@ StandardError=journal
 # at-spi2-registryd instance. Desktop here is a maintenance/recovery
 # workspace, not a daily driver, so screen-reader support is not a concern.
 Environment=NO_AT_BRIDGE=1
+# Only meaningful on NVIDIA, where this same unit backs both "Desktop
+# Mode" and "Steam Gaming Mode" (see lib/gpu.sh and
+# bin/htpc-steam-bigpicture-boot-marker's own header). No-op on AMD, and
+# the leading '-' ignores any failure here (e.g. an older install missing
+# the GPU vendor file) rather than blocking Plasma from starting.
+ExecStartPre=-/usr/local/bin/htpc-steam-bigpicture-boot-marker
 ExecStart=/usr/bin/startplasma-wayland
 # Desktop exiting on its own (logging out, or a crash) enters Fatal Error
 # (a plain getty on tty1) rather than relaunching Desktop or leaving a

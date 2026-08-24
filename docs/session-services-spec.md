@@ -5,10 +5,14 @@ Defines the systemd services backing each session described in [Session Lifecycl
 ## Units
 
 - htpc-kodi.service
-- htpc-steam.service
+- htpc-steam.service (AMD only -- see "Steam Gaming Mode" below)
 - htpc-desktop.service
 
 These are system-level systemd units. No display manager is used to start them or to switch between them.
+
+On NVIDIA hardware, htpc-steam.service does not exist: Steam Gaming Mode
+runs inside htpc-desktop.service's own KDE Plasma session instead. See
+"Steam Gaming Mode" below and lib/gpu.sh for why.
 
 ## Shared Behaviour
 
@@ -30,7 +34,15 @@ These are system-level systemd units. No display manager is used to start them o
 - `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`: lands on KDE Desktop, per "Shared Behaviour" above.
 - ExecStart runs `bin/htpc-kodi-launch` (installed to `/usr/local/bin`) instead of the vendored `/usr/bin/kodi-standalone` directly. It wraps `kodi --standalone` with the same clean-exit retry convention (exit 0 or 64-66 stops retrying; anything else is a crash and gets retried, up to 3 attempts), but with a real delay between attempts (8s by default) instead of kodi-standalone's own near-instant ones. This exists because Kodi's GBM windowing has been observed to fail its very first frame present after a session teardown on some NVIDIA driver/kernel combinations -- a `std::queue::back()` assertion in Kodi's own GBM buffer-queue code (`CWinSystemGbm::FlipPage`), hit because no buffer has been produced yet -- and retrying instantly reproduced the same failure on every attempt. A project-owned script rather than a patch to kodi-standalone itself, since a Kodi package update would silently overwrite the latter.
 
-## Steam Gaming Mode (htpc-steam.service)
+## Steam Gaming Mode
+
+How this is actually realized depends on the GPU vendor detected at
+install time (`htpc_gpu_vendor_install` in lib/gpu.sh, persisted to
+`/etc/cachyos-htpc/gpu-vendor`): AMD gets a dedicated gamescope-based
+htpc-steam.service, unchanged from this project's original design; NVIDIA
+gets no separate unit at all, folded into htpc-desktop.service instead.
+
+### AMD: htpc-steam.service
 
 - Packages: gamescope-session-cachyos, lib32-gamescope (official CachyOS repository).
 - Also installs mangohud and lib32-mangohud: these provide `mangoapp`, which is what actually renders the Quick Access Menu's "Performance Overlay" (FPS/CPU/GPU stats) under gamescope-session-cachyos. gamescope-session-cachyos passes gamescope the flag that enables this overlay, but without mangoapp installed there's nothing for that flag to render, so the overlay slider silently does nothing. Not a hard dependency of gamescope-session-cachyos itself (CachyOS bundles it separately, in its own `cachyos-gaming-applications` meta-package), so it's listed here explicitly.
@@ -45,14 +57,78 @@ These are system-level systemd units. No display manager is used to start them o
 - This makes Steam's own "Switch to Desktop" button return to Kodi, since Kodi is the primary interface. No SDDM interaction occurs at any point.
 - Steam invokes this script via pkexec (pre-authorized passwordlessly for any user by gamescope-session-cachyos's own polkit policy), so it runs as root; htpc-switch itself handles dropping back to the existing user. See [Session Manager Specification](session-manager-spec.md).
 - The original script is preserved via a `.htpc-backup` copy for the uninstaller to restore. Since /usr/bin/steamos-session-select is owned by the gamescope-session-cachyos package, a future package update may silently overwrite the wrapper back to upstream; re-running the installer's steam service step re-applies it.
+- None of the above are installed at all on NVIDIA.
+
+### NVIDIA: folded into htpc-desktop.service
+
+gamescope has a confirmed, actively-tracked upstream regression affecting
+its Steam overlay rendering in embedded DRM mode on current NVIDIA driver
+branches (ValveSoftware/gamescope#1964, #2171) -- reproduced live as
+display corruption whenever the Steam Overlay is toggled while a game is
+running. Rather than depend on gamescope at all on NVIDIA hardware, "Steam
+Gaming Mode" there is redefined as: the existing htpc-desktop.service KDE
+Plasma session, with Steam autostarting and, only in this mode,
+immediately being told to open Big Picture. This also sidesteps a second,
+unrelated problem hit while gamescope was still in the loop here: Steam's
+own "requires user namespaces" / bwrap sandboxing failures turned out to
+be sensitive to exactly how the session hosting it was started (see git
+history on this file for the investigation) -- letting KDE's own,
+well-trodden Plasma startup launch Steam exactly the way a normal desktop
+login would avoids all of that by construction.
+
+- No htpc-steam.service unit exists on NVIDIA at all; htpc-switch resolves
+  "steam" directly to htpc-desktop.service (see [Session Manager Specification](session-manager-spec.md)).
+- None of gamescope-session-cachyos, lib32-gamescope, mangohud, or
+  lib32-mangohud are installed (no gamescope Quick Access Menu Performance
+  Overlay exists in this mode), cachyos-gamescope-autologin.service is not
+  masked, and /usr/bin/steamos-session-select is not touched -- none of
+  that package's own files exist on this system in the first place.
+- `~/.config/autostart/htpc-steam-autostart.desktop` (installed by
+  `htpc_steam_autostart_install` in lib/gpu.sh) is a KDE autostart entry
+  that runs bin/htpc-steam-autostart once, automatically, every time this
+  session's own Plasma starts fresh. It sources
+  `/run/cachyos-htpc/environment` (see below) and either runs
+  `steam` (Desktop Mode) or `steam -bigpicture` (Steam Gaming Mode).
+  Autostart always uses `-bigpicture` rather than `steam://open/bigpicture`
+  because the protocol URL requires Steam to already be signed in online
+  -- confirmed live, a cold boot with the URI showed Steam's "needs to be
+  online" dialog and never opened Big Picture. Re-entering Big Picture
+  later while Steam is already running is handled by htpc-switch instead
+  (see "Toggling Between Steam Gaming Mode and KDE Desktop on NVIDIA" in
+  [Session Manager Specification](session-manager-spec.md)).
+- `/run/cachyos-htpc` is created on every boot, owned by the existing
+  user, by a tmpfiles.d drop-in (`/etc/tmpfiles.d/cachyos-htpc.conf`,
+  installed by `htpc_steam_bigpicture_runtime_dir_install`) -- before any
+  htpc-*.service unit starts, and cleared exactly once per real reboot.
+  `environment` inside it holds `HTPC_STEAM_BIGPICTURE=1` (Steam Gaming
+  Mode, open Big Picture) or `=0` (Desktop Mode). htpc-switch always
+  writes a definite value here immediately before starting or toggling
+  into this session (see [Session Manager Specification](session-manager-spec.md)).
+- `bin/htpc-steam-bigpicture-boot-marker`, installed as
+  htpc-desktop.service's own `ExecStartPre` (see below), derives this
+  environment file from the installer-recorded `BOOT_SESSION` the *one*
+  time it can possibly be missing: a cold boot, before htpc-switch has run
+  at all. In every other case htpc-switch has already written a definite
+  value, so this script leaves it alone.
+- Quitting Steam entirely, or just closing/minimizing Big Picture, is
+  deliberately treated as nothing more than an ordinary app in an ordinary
+  KDE Desktop session -- no lifecycle hook of any kind ties Steam's own
+  process to this session's. An earlier NVIDIA design (Big Picture running
+  under its own dedicated, dynamically-torn-down session unit) repeatedly
+  left Plasma stuck or unresponsive across exit/re-entry; not attempting
+  any of that in the first place avoids all of it.
+- Switching between Steam Gaming Mode and KDE Desktop while this session
+  is already running does not restart Plasma at all -- see "Toggling
+  Between Steam Gaming Mode and KDE Desktop on NVIDIA" in [Session Manager Specification](session-manager-spec.md).
 
 ## KDE Desktop (htpc-desktop.service)
 
 - Uses the existing CachyOS KDE Plasma installation already present on the system.
+- `ExecStartPre=-/usr/local/bin/htpc-steam-bigpicture-boot-marker`: only meaningful on NVIDIA, where this same unit also backs Steam Gaming Mode -- see "NVIDIA: folded into htpc-desktop.service" above. No-op on AMD. The leading `-` ignores any failure here rather than blocking Plasma from starting.
 - ExecStart runs startplasma-wayland directly as the existing user.
 - No SDDM or other display manager is involved.
 - Whether this unit is enabled to start automatically at boot depends on the choice made during installation, same as Kodi above -- see "Boot Configuration" in [Installer Specification](installer-spec.md).
-- `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback fatal`: unlike Kodi/Steam, lands on Fatal Error rather than KDE Desktop -- Desktop is already the last resort, so there is nowhere else to fall back to. See "Exit Fallback" in [Session Manager Specification](session-manager-spec.md).
+- `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback fatal`: unlike Kodi/Steam, lands on Fatal Error rather than KDE Desktop -- Desktop is already the last resort, so there is nowhere else to fall back to. See "Exit Fallback" in [Session Manager Specification](session-manager-spec.md). On NVIDIA this applies equally whether the session was in Steam Gaming Mode or Desktop Mode at the time -- both are this same unit, and quitting Steam itself never stops it (see above).
 
 ## Desktop Application Shortcuts
 

@@ -12,7 +12,11 @@ set -euo pipefail
 # root -- the target user is determined from $SUDO_USER.
 
 HTPC_PROJECT_DIR="/opt/cachyos-htpc"
-HTPC_REQUIRED_PACKAGES=(kodi gamescope-session-cachyos lib32-gamescope mangohud lib32-mangohud snapper grub-btrfs inotify-tools)
+HTPC_REQUIRED_PACKAGES_COMMON=(kodi snapper grub-btrfs inotify-tools)
+# AMD only: Steam Gaming Mode's own gamescope compositor, plus mangohud
+# for its Quick Access Menu "Performance Overlay". Not installed on
+# NVIDIA at all -- see lib/gpu.sh for why NVIDIA skips gamescope entirely.
+HTPC_REQUIRED_PACKAGES_GAMESCOPE=(gamescope-session-cachyos lib32-gamescope mangohud lib32-mangohud)
 
 script_dir() {
     cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
@@ -35,9 +39,19 @@ confirm() {
     local hint="y/N"
     [[ "${default}" =~ ^[Yy]$ ]] && hint="Y/n"
 
+    flush_stdin
     read -r -p "${prompt} [${hint}] " reply
     reply="${reply:-${default}}"
     [[ "${reply}" =~ ^[Yy]$ ]]
+}
+
+# Discards any input already buffered on stdin before a prompt reads
+# from it -- e.g. a stray Enter keypress during noisy pacman/build
+# output landing on the very next prompt instead of being ignored.
+flush_stdin() {
+    local discard
+    # shellcheck disable=SC2034 # intentionally discarded
+    while read -r -t 0.05 discard; do :; done
 }
 
 # Prompts for which session should start automatically at boot, defaulting
@@ -45,16 +59,27 @@ confirm() {
 # Accepts a number or the session name itself, case-insensitively, so a
 # previous choice printed back as the default can just be re-entered as
 # text too. Re-prompts on anything else instead of silently guessing.
+#
+# gpu_vendor only changes the "steam" option's own label: on NVIDIA it
+# boots straight into KDE Desktop with Steam opening Big Picture, rather
+# than a separate gamescope session -- see lib/gpu.sh.
 choose_boot_session() {
-    local previous default reply
+    local gpu_vendor="$1"
+    local previous default reply steam_label
     previous="$(htpc_install_record_get "BOOT_SESSION")"
     default="${previous:-kodi}"
 
+    steam_label="Steam Gaming Mode"
+    if [[ "${gpu_vendor}" == "nvidia" ]]; then
+        steam_label="Steam Gaming Mode (KDE Desktop + Steam, opening Big Picture)"
+    fi
+
+    flush_stdin
     {
         echo
         echo "Which session should start automatically at boot?"
         echo "  1) kodi    -- Kodi (default)"
-        echo "  2) steam   -- Steam Gaming Mode"
+        echo "  2) steam   -- ${steam_label}"
         echo "  3) desktop -- KDE Desktop"
     } >&2
 
@@ -82,7 +107,7 @@ step_bootstrap_project_files() {
 
     repo_dir="$(cd "${self_dir}/.." && pwd)"
     install -d -m 0755 "${HTPC_PROJECT_DIR}"
-    for item in bin lib systemd polkit kodi-addons desktop-shortcuts vendor; do
+    for item in bin lib systemd polkit kodi-addons desktop-shortcuts autostart vendor; do
         rm -rf "${HTPC_PROJECT_DIR:?}/${item}"
         cp -a "${repo_dir}/${item}" "${HTPC_PROJECT_DIR}/${item}"
     done
@@ -94,7 +119,7 @@ step_bootstrap_project_files() {
 source_libs() {
     local lib_dir="$1"
     local lib
-    for lib in log backup checks packages btrfs snapshot services kodi display_manager desktop_shortcuts install_record; do
+    for lib in log backup checks packages btrfs snapshot services gpu kodi display_manager desktop_shortcuts install_record; do
         # shellcheck disable=SC1090
         source "${lib_dir}/${lib}.sh"
     done
@@ -162,11 +187,12 @@ step_snapshot() {
 }
 
 step_verify_installation() {
-    local user="$1" boot_session="$2" kodi_home home apps_dir desktop_dir ok=0
+    local user="$1" boot_session="$2" gpu_vendor="$3" kodi_home home apps_dir desktop_dir boot_unit ok=0
     kodi_home="$(htpc_kodi_home "${user}")"
     home="$(dirname "${kodi_home}")"
     apps_dir="${home}/.local/share/applications"
     desktop_dir="$(htpc_desktop_shortcuts_desktop_dir "${user}" "${home}")"
+    boot_unit="$(htpc_session_unit_for "${boot_session}")"
 
     check() {
         local description="$1"
@@ -183,11 +209,20 @@ step_verify_installation() {
     check "htpc-switch installed" test -x /usr/local/bin/htpc-switch
     check "htpc-recovery command installed" test -x /usr/local/bin/htpc-recovery
     check "polkit rule installed" test -f "${HTPC_POLKIT_RULES_DIR}/${HTPC_POLKIT_RULE_NAME}"
+    check "GPU vendor recorded" test -f "${HTPC_GPU_VENDOR_FILE}"
     check "htpc-kodi.service installed" systemctl cat htpc-kodi.service
-    check "htpc-steam.service installed" systemctl cat htpc-steam.service
     check "htpc-desktop.service installed" systemctl cat htpc-desktop.service
-    check "htpc-${boot_session}.service enabled to start at boot" systemctl is-enabled --quiet "htpc-${boot_session}.service"
-    check "steamos-session-select replaced" cmp -s "${HTPC_PROJECT_DIR}/bin/htpc-steamos-session-select" "${HTPC_STEAMOS_SESSION_SELECT_PATH}"
+    check "${boot_unit} enabled to start at boot" systemctl is-enabled --quiet "${boot_unit}"
+    if [[ "${gpu_vendor}" == "nvidia" ]]; then
+        check "htpc-steam.service not installed (NVIDIA merges Steam Gaming Mode into htpc-desktop.service)" bash -c '! systemctl cat htpc-steam.service >/dev/null 2>&1'
+        check "Steam Gaming Mode runtime dir tmpfiles.d config installed" test -f "${HTPC_STEAM_BIGPICTURE_TMPFILES_CONF}"
+        check "htpc-steam-bigpicture-boot-marker installed" test -x "${HTPC_STEAM_BOOT_MARKER_DEST}"
+        check "htpc-steam-autostart installed" test -x "${HTPC_STEAM_AUTOSTART_DEST}"
+        check "htpc-steam-autostart.desktop installed" test -f "${home}/.config/autostart/htpc-steam-autostart.desktop"
+    else
+        check "htpc-steam.service installed" systemctl cat htpc-steam.service
+        check "steamos-session-select replaced" cmp -s "${HTPC_PROJECT_DIR}/bin/htpc-steamos-session-select" "${HTPC_STEAMOS_SESSION_SELECT_PATH}"
+    fi
     check "Steam Gaming Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.steam/addon.xml"
     check "Desktop Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.desktop/addon.xml"
     check "favourites seeded (session switch)" grep -q "script.htpc.steam" "${kodi_home}/userdata/favourites.xml"
@@ -216,19 +251,34 @@ main() {
     htpc_verify_cachyos
     htpc_verify_btrfs
 
+    local gpu_vendor
+    gpu_vendor="$(htpc_gpu_vendor_install)"
+    if [[ "${gpu_vendor}" == "nvidia" ]]; then
+        htpc_log_info "NVIDIA GPU detected: Steam Gaming Mode will run without gamescope, as part of the KDE Desktop session (see docs/session-services-spec.md)."
+    fi
+
+    local required_packages=("${HTPC_REQUIRED_PACKAGES_COMMON[@]}")
+    if [[ "${gpu_vendor}" != "nvidia" ]]; then
+        required_packages+=("${HTPC_REQUIRED_PACKAGES_GAMESCOPE[@]}")
+    fi
+
     # Captured before anything is installed (including by step_snapshot,
     # which ensures snapper/grub-btrfs/inotify-tools itself before the
     # dedicated package-install step below), so this reflects only
     # packages truly added by this run. See installer-spec.md.
     local missing_packages
-    missing_packages="$(htpc_packages_missing "${HTPC_REQUIRED_PACKAGES[@]}")"
+    missing_packages="$(htpc_packages_missing "${required_packages[@]}")"
 
     step_snapshot
 
-    htpc_log_info "Updating packages."
-    pacman -Syu --noconfirm
+    if confirm "Update all system packages (pacman -Syu) before proceeding? Decline if you know this system currently has broken/held-back package dependencies that a full upgrade would trip over." Y; then
+        htpc_log_info "Updating packages."
+        pacman -Syu --noconfirm
+    else
+        htpc_log_info "Skipping full system update at user's request."
+    fi
 
-    htpc_packages_install "${HTPC_REQUIRED_PACKAGES[@]}"
+    htpc_packages_install "${required_packages[@]}"
 
     step_install_recovery_command
 
@@ -236,11 +286,23 @@ main() {
     htpc_kodi_launch_install
     htpc_polkit_rule_install "${user}"
     htpc_service_install "htpc-kodi.service" "${user}"
-    htpc_service_install "htpc-steam.service" "${user}"
     htpc_service_install "htpc-desktop.service" "${user}"
+    if [[ "${gpu_vendor}" == "nvidia" ]]; then
+        htpc_service_uninstall "htpc-steam.service"
+        htpc_steam_bigpicture_runtime_dir_install "${user}"
+        htpc_steam_bigpicture_boot_marker_install
+        htpc_steam_autostart_install "${user}"
+    else
+        htpc_service_install "htpc-steam.service" "${user}"
+        htpc_steam_bigpicture_runtime_dir_uninstall
+        htpc_steam_bigpicture_boot_marker_uninstall
+        htpc_steam_autostart_uninstall "${user}"
+    fi
     htpc_environment_no_at_bridge_install "${user}"
-    htpc_user_unit_mask "cachyos-gamescope-autologin.service" "${user}"
-    htpc_steamos_session_select_install
+    if [[ "${gpu_vendor}" != "nvidia" ]]; then
+        htpc_user_unit_mask "cachyos-gamescope-autologin.service" "${user}"
+        htpc_steamos_session_select_install
+    fi
     htpc_display_manager_disable_and_record
 
     htpc_kodi_addons_install "${user}"
@@ -248,7 +310,7 @@ main() {
     htpc_desktop_shortcuts_install "${user}"
 
     local boot_session
-    boot_session="$(choose_boot_session)"
+    boot_session="$(choose_boot_session "${gpu_vendor}")"
     htpc_boot_session_set "${boot_session}"
     htpc_install_record_set "BOOT_SESSION" "${boot_session}"
 
@@ -257,7 +319,7 @@ main() {
     htpc_install_record_append_unique "INSTALLED_PACKAGES" ${missing_packages}
 
     htpc_log_info "Verifying installation."
-    if step_verify_installation "${user}" "${boot_session}"; then
+    if step_verify_installation "${user}" "${boot_session}" "${gpu_vendor}"; then
         htpc_log_info "Installation verified successfully."
     else
         htpc_log_error "Some checks failed; review the errors above before rebooting."

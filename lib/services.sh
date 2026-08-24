@@ -63,20 +63,29 @@ htpc_service_install() {
     htpc_log_info "Installed ${name} for user ${target_user}."
 }
 
-# Enables exactly one of the three htpc-*.service units to start
+# Enables exactly one of the (at most three) htpc-*.service units to start
 # automatically at boot -- the session the installer prompted for -- and
-# disables the other two. Disabling the other two (rather than only
-# enabling the target) matters on a rerun with a different choice: without
-# it, the previously-chosen unit would stay enabled alongside the new one,
-# and systemd would attempt to start both at boot, immediately conflicting
-# via each unit's own Conflicts= on the other two. Does not start or stop
+# disables the others. Disabling the others (rather than only enabling the
+# target) matters on a rerun with a different choice: without it, the
+# previously-chosen unit would stay enabled alongside the new one, and
+# systemd would attempt to start both at boot, immediately conflicting via
+# each unit's own Conflicts= on the other two. Does not start or stop
 # anything now; only affects the next boot.
+#
+# target's actual unit is resolved via htpc_session_unit_for (lib/gpu.sh):
+# on NVIDIA, "steam" resolves to htpc-desktop.service itself (there is no
+# separate htpc-steam.service there), so choosing "steam" here just leaves
+# htpc-desktop.service enabled, same as choosing "desktop" would -- see
+# bin/htpc-steam-bigpicture-boot-marker for how the two are still told
+# apart at boot, via BOOT_SESSION in the install record.
 htpc_boot_session_set() {
     local target="$1"
-    local unit
+    local target_unit unit
+
+    target_unit="$(htpc_session_unit_for "${target}")"
 
     for unit in "${HTPC_SERVICE_UNITS[@]}"; do
-        if [[ "${unit}" == "htpc-${target}.service" ]]; then
+        if [[ "${unit}" == "${target_unit}" ]]; then
             systemctl enable "${unit}"
             htpc_log_info "Enabled ${unit} to start at boot."
         else
