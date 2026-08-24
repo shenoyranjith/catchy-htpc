@@ -1,44 +1,172 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Launches Kodi standalone, retrying on an unclean exit like the upstream
-# /usr/bin/kodi-standalone wrapper does -- but with a real delay between
-# attempts, unlike that wrapper's own near-immediate retries (~2s apart).
+# Launches Kodi standalone for htpc-kodi.service.
 #
-# Exists because Kodi's GBM windowing has been observed to fail on the
-# very first frame present after a session teardown on some NVIDIA
-# driver/kernel combinations (a std::queue::back() assertion in Kodi's own
-# GBM buffer-queue code, hit before a buffer has been produced yet), and
-# retrying instantly reproduces the same failure every time. Giving the
-# driver a few seconds to settle before retrying is worth testing before
-# concluding it's an unconditional bug; see session-services-spec.md.
+# AMD: WINDOWING=gbm (Kodi owns DRM/KMS directly), with the same clean-exit
+# retry convention as upstream /usr/bin/kodi-standalone, but with a real
+# delay between attempts. Instant retries have been observed to reproduce
+# a GBM first-frame FlipPage failure after a compositor teardown.
 #
-# Kept as a small project-owned script (not a patch to the vendored
-# kodi-standalone, which a Kodi package update would silently overwrite).
-# Mirrors kodi-standalone's exit-code convention: 0 or 64-66 is a clean
-# exit and stops the retry loop immediately; anything else is a crash.
+# NVIDIA: Kodi's own GBM backend aborts unconditionally on current
+# nvidia-open driver branches during the splash-screen FlipPage
+# (std::queue::back() on an empty GBM buffer queue) -- confirmed live on
+# cold boot with multi-second delays between attempts, so this is not a
+# settle race. Launching Kodi from Plasma's app menu works because that
+# path is WINDOWING=wayland under kwin. Mirror that here: run a kiosk
+# kwin_wayland on tty1 and start Kodi as a Wayland client, without
+# plasmashell. See session-services-spec.md.
 #
-# Not meant to be run directly; installed as the ExecStart for
+# Exit codes 0 / 64-66 are treated as clean (stop retrying), matching
+# kodi-standalone. Anything else is a crash and is retried.
+#
+# Not meant to be run directly; installed as ExecStart for
 # htpc-kodi.service. See lib/services.sh (htpc_kodi_launch_install).
 
 readonly HTPC_KODI_MAX_ATTEMPTS="${HTPC_KODI_MAX_ATTEMPTS:-3}"
 readonly HTPC_KODI_RETRY_DELAY_SECONDS="${HTPC_KODI_RETRY_DELAY_SECONDS:-8}"
+readonly HTPC_GPU_VENDOR_FILE="/etc/cachyos-htpc/gpu-vendor"
+readonly HTPC_KODI_WAYLAND_SOCKET="kodi-htpc"
+
+htpc_kodi_log() {
+    # systemd's TTYPath=/dev/tty1 + StandardInput=tty often swallows the
+    # unit's stdout/stderr from journalctl -u, so also go through logger.
+    printf 'htpc-kodi-launch: %s\n' "$*" >&2
+    if command -v logger >/dev/null 2>&1; then
+        logger -t cachyos-htpc -- "htpc-kodi-launch: $*" || true
+    fi
+}
+
+htpc_kodi_gpu_vendor() {
+    if [[ -r "${HTPC_GPU_VENDOR_FILE}" ]]; then
+        cat "${HTPC_GPU_VENDOR_FILE}"
+    else
+        printf 'amd\n'
+    fi
+}
+
+# First DRM card driven by nvidia. On hybrid AMD iGPU + NVIDIA dGPU boxes
+# the iGPU often enumerates as card0 with no connected display; pinning
+# kwin to the NVIDIA node avoids a blank kiosk compositor.
+htpc_nvidia_drm_node() {
+    local sys card
+    for sys in /sys/class/drm/card[0-9]; do
+        [[ -f "${sys}/device/uevent" ]] || continue
+        if grep -qx 'DRIVER=nvidia' "${sys}/device/uevent"; then
+            card="/dev/dri/$(basename "${sys}")"
+            if [[ -e "${card}" ]]; then
+                printf '%s\n' "${card}"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# NVIDIA: kwin_wayland kiosk + Kodi as a Wayland client. Runs kodi as a
+# child (not via kwin --exit-with-session) so Kodi's own exit code is
+# preserved for the retry / clean-exit logic above.
+htpc_kodi_run_nvidia() {
+    local drm kwin_pid i socket_path ret
+    local -a kwin_cmd
+
+    if ! command -v kwin_wayland >/dev/null 2>&1; then
+        htpc_kodi_log "kwin_wayland not found; cannot start NVIDIA Kodi session."
+        return 1
+    fi
+
+    export WINDOWING=wayland
+    export XDG_SESSION_TYPE=wayland
+    export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-KDE}"
+    : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+    export XDG_RUNTIME_DIR
+    unset DISPLAY
+    unset WAYLAND_DISPLAY
+
+    if drm="$(htpc_nvidia_drm_node)"; then
+        export KWIN_DRM_DEVICES="${drm}"
+        htpc_kodi_log "Using NVIDIA DRM node ${drm}."
+    else
+        htpc_kodi_log "No NVIDIA DRM node found; letting kwin pick a device."
+    fi
+
+    socket_path="${XDG_RUNTIME_DIR}/${HTPC_KODI_WAYLAND_SOCKET}"
+    rm -f "${socket_path}" "${socket_path}.lock"
+
+    kwin_cmd=(
+        /usr/bin/kwin_wayland
+        --drm
+        --no-lockscreen
+        --no-kactivities
+        --socket "${HTPC_KODI_WAYLAND_SOCKET}"
+    )
+
+    htpc_kodi_log "Starting kwin_wayland kiosk for Kodi (WINDOWING=wayland)."
+    "${kwin_cmd[@]}" &
+    kwin_pid=$!
+
+    cleanup_kwin() {
+        if kill -0 "${kwin_pid}" 2>/dev/null; then
+            kill "${kwin_pid}" 2>/dev/null || true
+            wait "${kwin_pid}" 2>/dev/null || true
+        fi
+    }
+    trap cleanup_kwin EXIT
+
+    for ((i = 0; i < 50; i++)); do
+        if [[ -S "${socket_path}" ]]; then
+            break
+        fi
+        if ! kill -0 "${kwin_pid}" 2>/dev/null; then
+            wait "${kwin_pid}" 2>/dev/null || true
+            trap - EXIT
+            htpc_kodi_log "kwin_wayland exited before creating ${socket_path}."
+            return 1
+        fi
+        sleep 0.1
+    done
+
+    if [[ ! -S "${socket_path}" ]]; then
+        cleanup_kwin
+        trap - EXIT
+        htpc_kodi_log "Timed out waiting for Wayland socket ${socket_path}."
+        return 1
+    fi
+
+    export WAYLAND_DISPLAY="${HTPC_KODI_WAYLAND_SOCKET}"
+    /usr/bin/kodi --standalone "$@"
+    # `local ret=$?` would clobber $? (local itself is a command).
+    ret=$?
+
+    cleanup_kwin
+    trap - EXIT
+    return "${ret}"
+}
+
+htpc_kodi_run() {
+    if [[ "$(htpc_kodi_gpu_vendor)" == "nvidia" ]]; then
+        htpc_kodi_run_nvidia "$@"
+    else
+        export WINDOWING=gbm
+        /usr/bin/kodi --standalone "$@"
+    fi
+}
 
 attempt=1
 while (( attempt <= HTPC_KODI_MAX_ATTEMPTS )); do
-    /usr/bin/kodi --standalone "$@"
+    htpc_kodi_run "$@"
     ret=$?
 
     if (( ret == 0 )) || { (( ret >= 64 )) && (( ret <= 66 )); }; then
         exit "${ret}"
     fi
 
-    echo "htpc-kodi-launch: kodi exited uncleanly (status ${ret}), attempt ${attempt}/${HTPC_KODI_MAX_ATTEMPTS}." >&2
+    htpc_kodi_log "kodi exited uncleanly (status ${ret}), attempt ${attempt}/${HTPC_KODI_MAX_ATTEMPTS}."
     if (( attempt < HTPC_KODI_MAX_ATTEMPTS )); then
         sleep "${HTPC_KODI_RETRY_DELAY_SECONDS}"
     fi
     (( attempt++ ))
 done
 
-echo "htpc-kodi-launch: kodi failed ${HTPC_KODI_MAX_ATTEMPTS} times in a row; giving up." >&2
+htpc_kodi_log "kodi failed ${HTPC_KODI_MAX_ATTEMPTS} times in a row; giving up."
 exit 1

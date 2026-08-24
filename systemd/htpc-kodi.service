@@ -19,6 +19,9 @@ TTYVHangup=yes
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal
+# Default for AMD. On NVIDIA, htpc-kodi-launch overrides this to wayland and
+# starts a kiosk kwin_wayland -- see that script's header (Kodi GBM FlipPage
+# aborts on current nvidia-open branches; app-menu Wayland works).
 Environment=WINDOWING=gbm
 # Without this, GTK/Qt components pulled in transitively (codecs, addons)
 # each trigger a D-Bus-activated, per-connection at-spi2-registryd instance
@@ -27,10 +30,8 @@ Environment=WINDOWING=gbm
 # ~10 accumulated over one afternoon of switching. No accessibility/screen
 # reader use case exists on this appliance, so skip the bridge outright.
 Environment=NO_AT_BRIDGE=1
-# htpc-kodi-launch wraps /usr/bin/kodi --standalone with the same clean-exit
-# retry convention as the vendored /usr/bin/kodi-standalone, but with a real
-# delay between retries instead of near-instant ones -- see its own header
-# for why (a GBM buffer-queue race on some NVIDIA driver/kernel combinations).
+# htpc-kodi-launch wraps /usr/bin/kodi --standalone (AMD: GBM; NVIDIA: kwin
+# kiosk + Wayland) with a delayed clean-exit retry loop -- see its header.
 ExecStart=/usr/local/bin/htpc-kodi-launch
 # Kodi's own "Exit" quits the whole process cleanly; without a fallback,
 # that would strand the user on a blank tty1 with no running session, and

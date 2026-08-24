@@ -84,7 +84,14 @@ made the Desktop shortcut look like a no-op. That path:
 
 A transition into or out of "kodi" always goes through the normal
 stop/start path regardless of GPU vendor, since Kodi is always its own
-separate unit.
+separate unit. Leaving Desktop (or NVIDIA Steam Gaming Mode, which is the
+same Plasma session) for Kodi also stops `plasma-workspace.target` and
+waits for `kwin_wayland` to exit before starting htpc-kodi.service:
+Plasma 6 launches the compositor under the long-lived systemd --user
+manager, not under htpc-desktop.service's own cgroup, so stopping that
+unit alone leaves kwin holding DRM/KMS and Kodi's GBM session fails to
+acquire the display -- while launching Kodi from Plasma's app menu still
+works because that path is nested under Wayland.
 
 ## Self-Referential Invocation
 

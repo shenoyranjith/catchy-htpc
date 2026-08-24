@@ -239,6 +239,38 @@ htpc_cleanup_accessibility_bus() {
     systemctl --user stop 'dbus-*-org.a11y.atspi.Registry@0.service' 2>/dev/null || true
 }
 
+# Tears down Plasma 6's own systemd --user session (kwin_wayland,
+# plasmashell, etc. under plasma-workspace.target). Confirmed live: those
+# units are not children of htpc-desktop.service's cgroup -- Plasma
+# launches them under the long-lived systemd --user manager -- so
+# `systemctl stop htpc-desktop.service` alone leaves kwin holding DRM/KMS.
+# The next Kodi session needs that DRM free whether it takes it via GBM
+# (AMD) or via its own kiosk kwin_wayland (NVIDIA -- see
+# bin/htpc-kodi-launch). Same root cause as the earlier NVIDIA Big Picture
+# teardown hang; here we just need Plasma's compositor gone before Kodi
+# starts.
+#
+# Waits briefly for kwin to actually exit so the DRM hand-off is not a
+# race against the next compositor/Kodi startup.
+htpc_cleanup_plasma_session() {
+    systemctl --user stop plasma-workspace.target 2>/dev/null || true
+
+    local i
+    for ((i = 0; i < 40; i++)); do
+        if ! pgrep -u "$(id -u)" -x kwin_wayland >/dev/null 2>&1 \
+            && ! pgrep -u "$(id -u)" -x kwin_wayland_wrapper >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.25
+    done
+
+    htpc_log_error "Plasma compositor still running after stopping plasma-workspace.target; forcing it down."
+    pkill -u "$(id -u)" -x kwin_wayland 2>/dev/null || true
+    pkill -u "$(id -u)" -x kwin_wayland_wrapper 2>/dev/null || true
+    pkill -u "$(id -u)" -x plasmashell 2>/dev/null || true
+    sleep 1
+}
+
 # True if a switch dispatched by this script is currently in progress, i.e.
 # an htpc-switch-worker-* transient unit (see main()) is still running. Used
 # by htpc_exit_fallback below: when the worker calls `systemctl stop` on the
@@ -333,6 +365,18 @@ htpc_worker_main() {
         # unlike checking right after starting the *new* one (which may not
         # have connected yet).
         htpc_cleanup_accessibility_bus
+
+        # Leaving a Plasma-backed session (plain Desktop always; Steam
+        # Gaming Mode on NVIDIA too) for Kodi: free DRM/KMS before the
+        # Kodi session's own compositor / GBM path takes it. Harmless
+        # no-op if Plasma was never up.
+        if [[ "${target}" == "kodi" ]] && { [[ "${current}" == "desktop" ]] || [[ "${current}" == "steam" ]]; }; then
+            htpc_log_info "Ensuring Plasma has fully released the display before starting Kodi."
+            htpc_cleanup_plasma_session
+            # Brief settle after the compositor is gone before the next
+            # DRM client (AMD GBM or NVIDIA kiosk kwin) starts.
+            sleep 2
+        fi
     fi
 
     if [[ "${target}" == "fatal" ]]; then
