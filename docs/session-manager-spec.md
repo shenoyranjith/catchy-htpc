@@ -22,29 +22,18 @@ Implementation: Bash.
 - Record transition logs via journald.
 - Recover to KDE Desktop when possible; if KDE Desktop also fails to start, enter Fatal Error (see [Session Lifecycle](session-lifecycle.md)).
 
-## GPU-Dependent Steam Launch
+## GPU-Dependent Unit Resolution
 
-htpc-switch maps kodi/steam/desktop to three distinct units on every GPU
-(`htpc-kodi.service`, `htpc-steam.service`, `htpc-desktop.service`). The
-GPU vendor file (`/etc/cachyos-htpc/gpu-vendor`) is read by
-`bin/htpc-steam-launch` (and similarly by `bin/htpc-kodi-launch`) to pick
-the right binary path inside those units -- not to remap units:
+- AMD: kodi / steam / desktop are three distinct units. Steam uses
+  `start-gamescope-session` via `bin/htpc-steam-launch`.
+- NVIDIA: "steam" and "desktop" share `htpc-desktop.service`. Gaming Mode
+  is nested gamescope + Steam Deck UI (`bin/htpc-steamdeck-launch`), which
+  always quits Steam first. Toggles between steam and desktop run
+  in-process without restarting Plasma. Steam's "Switch to Desktop" maps
+  to `htpc-switch desktop` (same session), not Kodi.
 
-- AMD: `htpc-steam-launch` execs `start-gamescope-session`.
-- NVIDIA: `htpc-steam-launch` runs a minimal
-  `gamescope … -- steam -steamdeck` (confirmed working from a console;
-  the full gamescope-session-cachyos boot path broke the Deck UI).
-
-An earlier NVIDIA design that folded steam into htpc-desktop.service with
-a Big Picture marker is retired. Unused Big Picture helpers may still
-exist in htpc-switch for a clean partial-upgrade path; they are never
-reached.
-
-Leaving Desktop for Kodi or Steam stops `plasma-workspace.target` and
-waits for `kwin_wayland` to exit before starting the destination unit:
-Plasma 6 launches the compositor under the long-lived systemd --user
-manager, not under htpc-desktop.service's own cgroup, so stopping that
-unit alone leaves kwin holding DRM/KMS.
+Leaving Plasma for Kodi still stops `plasma-workspace.target` and waits
+for kwin to exit so the next exclusive DRM client can take the display.
 
 ## Self-Referential Invocation
 

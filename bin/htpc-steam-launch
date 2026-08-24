@@ -1,21 +1,14 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Launches Steam Gaming Mode for htpc-steam.service.
+# Launches Steam Gaming Mode for htpc-steam.service (AMD installs only).
 #
 # AMD: execs the CachyOS gamescope-session-cachyos entrypoint
-# (/usr/bin/start-gamescope-session), unchanged from before.
+# (/usr/bin/start-gamescope-session).
 #
-# NVIDIA: runs a minimal gamescope + Steam Deck UI command that has been
-# confirmed to work on the primary HTPC when launched from a console:
-#   gamescope -w 3840 -h 2160 -r 60 -f -e -- steam -steamdeck
-# The earlier NVIDIA failure mode was the full start-gamescope-session /
-# gamescope-session-cachyos boot path (broken Deck UI), not gamescope
-# itself. This script deliberately skips that session glue.
-#
-# Width/height/refresh are overridable via HTPC_GAMESCOPE_WIDTH /
-# HTPC_GAMESCOPE_HEIGHT / HTPC_GAMESCOPE_REFRESH for other displays.
-# Set any of them to empty to omit that flag and let gamescope decide.
+# NVIDIA no longer uses this unit or script -- Deck UI is nested under
+# Plasma via bin/htpc-steamdeck-launch. An NVIDIA branch remains only as
+# a defensive fallback if this binary is somehow still invoked.
 #
 # Not meant to be run directly; installed as ExecStart for
 # htpc-steam.service. See lib/services.sh (htpc_steam_launch_install).

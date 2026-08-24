@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# NVIDIA Steam Gaming Mode helper: nested gamescope + Steam Deck UI inside
+# the already-running Plasma session (same session model as the old Big
+# Picture fold). Confirmed live: exclusive DRM gamescope under a system
+# unit hits Steam's "requires user namespaces" / bwrap failure, while the
+# same gamescope command works when nested under Plasma.
+#
+# gamescope will not take over cleanly if a desktop Steam client is already
+# running -- Steam must be fully exited first (user-confirmed).
+#
+# Usage:
+#   htpc-steamdeck-launch          # quit Steam/gamescope, then start Deck UI
+#   htpc-steamdeck-launch --stop   # quit Steam/gamescope only (back to Plasma)
+#
+# Width/height/refresh overridable via HTPC_GAMESCOPE_WIDTH / HEIGHT / REFRESH
+# (same defaults as the console-proven command). Installed to /usr/local/bin;
+# called from htpc-switch and bin/htpc-steam-autostart.
+
+readonly HTPC_STEAMDECK_WAIT_SECONDS="${HTPC_STEAMDECK_WAIT_SECONDS:-20}"
+
+htpc_steamdeck_log() {
+    printf 'htpc-steamdeck-launch: %s\n' "$*" >&2
+    if command -v logger >/dev/null 2>&1; then
+        logger -t cachyos-htpc -- "htpc-steamdeck-launch: $*" || true
+    fi
+}
+
+htpc_steamdeck_steam_running() {
+    local uid pid pidfile
+    uid="$(id -u)"
+    pidfile="${HOME}/.steam/steam.pid"
+    if [[ -r "${pidfile}" ]]; then
+        pid="$(tr -d '[:space:]' < "${pidfile}")"
+        if [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    pgrep -u "${uid}" -x steam >/dev/null 2>&1
+}
+
+htpc_steamdeck_gamescope_running() {
+    pgrep -u "$(id -u)" -x gamescope >/dev/null 2>&1
+}
+
+# Ask Steam to exit, then force-stop leftovers (including gamescope).
+htpc_steamdeck_stop() {
+    local i
+    if htpc_steamdeck_steam_running; then
+        htpc_steamdeck_log "Asking Steam to shut down."
+        /usr/bin/steam -shutdown >/dev/null 2>&1 || true
+    fi
+    if htpc_steamdeck_gamescope_running; then
+        htpc_steamdeck_log "Stopping gamescope."
+        pkill -u "$(id -u)" -x gamescope 2>/dev/null || true
+    fi
+
+    for ((i = 0; i < HTPC_STEAMDECK_WAIT_SECONDS * 4; i++)); do
+        if ! htpc_steamdeck_steam_running && ! htpc_steamdeck_gamescope_running; then
+            return 0
+        fi
+        sleep 0.25
+    done
+
+    htpc_steamdeck_log "Steam/gamescope still running; forcing them down."
+    pkill -u "$(id -u)" -x steam 2>/dev/null || true
+    pkill -u "$(id -u)" -x gamescope 2>/dev/null || true
+    sleep 1
+}
+
+htpc_steamdeck_start() {
+    local width height refresh
+    local -a gs_cmd
+
+    if ! command -v gamescope >/dev/null 2>&1; then
+        htpc_steamdeck_log "gamescope not found."
+        return 1
+    fi
+    if ! command -v steam >/dev/null 2>&1; then
+        htpc_steamdeck_log "steam not found."
+        return 1
+    fi
+
+    htpc_steamdeck_stop
+
+    width="${HTPC_GAMESCOPE_WIDTH-3840}"
+    height="${HTPC_GAMESCOPE_HEIGHT-2160}"
+    refresh="${HTPC_GAMESCOPE_REFRESH-60}"
+
+    gs_cmd=(/usr/bin/gamescope)
+    if [[ -n "${width}" ]]; then
+        gs_cmd+=(-w "${width}")
+    fi
+    if [[ -n "${height}" ]]; then
+        gs_cmd+=(-h "${height}")
+    fi
+    if [[ -n "${refresh}" ]]; then
+        gs_cmd+=(-r "${refresh}")
+    fi
+    # Nested under Plasma: -f fullscreen window, -e Steam integration.
+    gs_cmd+=(-f -e -- /usr/bin/steam -steamdeck)
+
+    htpc_steamdeck_log "Starting: ${gs_cmd[*]}"
+    nohup "${gs_cmd[@]}" >/dev/null 2>&1 &
+    disown
+}
+
+case "${1:-}" in
+    --stop)
+        htpc_steamdeck_stop
+        ;;
+    ""|--start)
+        htpc_steamdeck_start
+        ;;
+    *)
+        echo "Usage: $(basename "$0") [--start|--stop]" >&2
+        exit 1
+        ;;
+esac

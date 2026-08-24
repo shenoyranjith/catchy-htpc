@@ -12,11 +12,13 @@ set -euo pipefail
 # root -- the target user is determined from $SUDO_USER.
 
 HTPC_PROJECT_DIR="/opt/cachyos-htpc"
-HTPC_REQUIRED_PACKAGES_COMMON=(kodi snapper grub-btrfs inotify-tools)
+# Bootloader-specific snapper integration (grub-btrfs vs limine-snapper-sync)
+# is added after htpc_bootloader_detect; see main().
+HTPC_REQUIRED_PACKAGES_COMMON=(kodi snapper inotify-tools)
 # AMD: full CachyOS gamescope session (QAM performance overlay via mangoapp).
 HTPC_REQUIRED_PACKAGES_GAMESCOPE_AMD=(gamescope-session-cachyos lib32-gamescope mangohud lib32-mangohud)
-# NVIDIA: plain gamescope only -- the session package's start script broke
-# the Deck UI on cold boot; bin/htpc-steam-launch uses a minimal command.
+# NVIDIA: plain gamescope only -- nested under Plasma via
+# bin/htpc-steamdeck-launch (no gamescope-session-cachyos).
 HTPC_REQUIRED_PACKAGES_GAMESCOPE_NVIDIA=(gamescope lib32-gamescope)
 
 script_dir() {
@@ -62,7 +64,7 @@ flush_stdin() {
 # text too. Re-prompts on anything else instead of silently guessing.
 #
 # gpu_vendor only changes the "steam" option's own label (AMD session
-# package vs NVIDIA minimal gamescope).
+# package vs NVIDIA Plasma-nested Deck UI).
 choose_boot_session() {
     local gpu_vendor="$1"
     local previous default reply steam_label
@@ -71,7 +73,7 @@ choose_boot_session() {
 
     steam_label="Steam Gaming Mode"
     if [[ "${gpu_vendor}" == "nvidia" ]]; then
-        steam_label="Steam Gaming Mode (gamescope + Steam Deck UI)"
+        steam_label="Steam Gaming Mode (Plasma + gamescope Steam Deck UI)"
     fi
 
     flush_stdin
@@ -119,7 +121,7 @@ step_bootstrap_project_files() {
 source_libs() {
     local lib_dir="$1"
     local lib
-    for lib in log backup checks packages btrfs snapshot services gpu kodi display_manager desktop_shortcuts install_record; do
+    for lib in log backup checks packages btrfs bootloader snapshot services gpu kodi display_manager desktop_shortcuts install_record; do
         # shellcheck disable=SC1090
         source "${lib_dir}/${lib}.sh"
     done
@@ -212,15 +214,20 @@ step_verify_installation() {
     check "GPU vendor recorded" test -f "${HTPC_GPU_VENDOR_FILE}"
     check "htpc-kodi.service installed" systemctl cat htpc-kodi.service
     check "htpc-desktop.service installed" systemctl cat htpc-desktop.service
-    check "htpc-steam.service installed" systemctl cat htpc-steam.service
     check "htpc-kodi-launch installed" test -x /usr/local/bin/htpc-kodi-launch
-    check "htpc-steam-launch installed" test -x /usr/local/bin/htpc-steam-launch
     check "${boot_unit} enabled to start at boot" systemctl is-enabled --quiet "${boot_unit}"
-    check "steamos-session-select installed" cmp -s "${HTPC_PROJECT_DIR}/bin/htpc-steamos-session-select" "${HTPC_STEAMOS_SESSION_SELECT_PATH}"
     if [[ "${gpu_vendor}" == "nvidia" ]]; then
-        check "v1.0.1 Big Picture boot-marker not present" bash -c "[[ ! -e '${HTPC_STEAM_BOOT_MARKER_DEST}' ]]"
-        check "v1.0.1 Steam Plasma autostart not present" bash -c "[[ ! -e '${HTPC_STEAM_AUTOSTART_DEST}' ]]"
-        check "v1.0.1 Steam Plasma autostart.desktop not present" bash -c "[[ ! -f '${home}/.config/autostart/htpc-steam-autostart.desktop' ]]"
+        check "htpc-steam.service not installed (NVIDIA nests Deck UI in Plasma)" bash -c '! systemctl cat htpc-steam.service >/dev/null 2>&1'
+        check "htpc-steamdeck-launch installed" test -x /usr/local/bin/htpc-steamdeck-launch
+        check "Steam Gaming Mode runtime dir tmpfiles.d config installed" test -f "${HTPC_STEAM_BIGPICTURE_TMPFILES_CONF}"
+        check "htpc-steam-bigpicture-boot-marker installed" test -x "${HTPC_STEAM_BOOT_MARKER_DEST}"
+        check "htpc-steam-autostart installed" test -x "${HTPC_STEAM_AUTOSTART_DEST}"
+        check "htpc-steam-autostart.desktop installed" test -f "${home}/.config/autostart/htpc-steam-autostart.desktop"
+        check "steamos-session-select installed" cmp -s "${HTPC_PROJECT_DIR}/bin/htpc-steamos-session-select" "${HTPC_STEAMOS_SESSION_SELECT_PATH}"
+    else
+        check "htpc-steam.service installed" systemctl cat htpc-steam.service
+        check "htpc-steam-launch installed" test -x /usr/local/bin/htpc-steam-launch
+        check "steamos-session-select replaced" cmp -s "${HTPC_PROJECT_DIR}/bin/htpc-steamos-session-select" "${HTPC_STEAMOS_SESSION_SELECT_PATH}"
     fi
     check "Steam Gaming Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.steam/addon.xml"
     check "Desktop Mode add-on installed" test -f "${kodi_home}/addons/script.htpc.desktop/addon.xml"
@@ -253,10 +260,19 @@ main() {
     local gpu_vendor
     gpu_vendor="$(htpc_gpu_vendor_install)"
     if [[ "${gpu_vendor}" == "nvidia" ]]; then
-        htpc_log_info "NVIDIA GPU detected: Steam Gaming Mode will use minimal gamescope + steam -steamdeck (see docs/session-services-spec.md)."
+        htpc_log_info "NVIDIA GPU detected: Steam Gaming Mode will nest gamescope + Steam Deck UI inside the KDE Desktop session (see docs/session-services-spec.md)."
     fi
 
+    local bootloader
+    bootloader="$(htpc_bootloader_detect)"
+    htpc_log_info "Detected bootloader: $(htpc_bootloader_menu_name "${bootloader}")."
+    htpc_install_record_set "BOOTLOADER" "${bootloader}"
+
     local required_packages=("${HTPC_REQUIRED_PACKAGES_COMMON[@]}")
+    local bootloader_pkg
+    while IFS= read -r bootloader_pkg; do
+        [[ -n "${bootloader_pkg}" ]] && required_packages+=("${bootloader_pkg}")
+    done < <(htpc_bootloader_snapshot_packages "${bootloader}")
     if [[ "${gpu_vendor}" == "nvidia" ]]; then
         required_packages+=("${HTPC_REQUIRED_PACKAGES_GAMESCOPE_NVIDIA[@]}")
     else
@@ -264,7 +280,7 @@ main() {
     fi
 
     # Captured before anything is installed (including by step_snapshot,
-    # which ensures snapper/grub-btrfs/inotify-tools itself before the
+    # which ensures snapper + bootloader snapshot sync packages before the
     # dedicated package-install step below), so this reflects only
     # packages truly added by this run. See installer-spec.md.
     local missing_packages
@@ -285,20 +301,28 @@ main() {
 
     htpc_switch_install
     htpc_kodi_launch_install
-    htpc_steam_launch_install
     htpc_polkit_rule_install "${user}"
     htpc_service_install "htpc-kodi.service" "${user}"
     htpc_service_install "htpc-desktop.service" "${user}"
-    htpc_service_install "htpc-steam.service" "${user}"
-    # Clear any leftover v1.0.1 NVIDIA Plasma Big Picture wiring.
-    htpc_steam_bigpicture_runtime_dir_uninstall
-    htpc_steam_bigpicture_boot_marker_uninstall
-    htpc_steam_autostart_uninstall "${user}"
-    htpc_environment_no_at_bridge_install "${user}"
-    htpc_steamos_session_select_install
-    if [[ "${gpu_vendor}" != "nvidia" ]]; then
+    if [[ "${gpu_vendor}" == "nvidia" ]]; then
+        htpc_service_uninstall "htpc-steam.service"
+        htpc_steam_launch_uninstall
+        htpc_steam_bigpicture_runtime_dir_install "${user}"
+        htpc_steam_bigpicture_boot_marker_install
+        htpc_steamdeck_launch_install
+        htpc_steam_autostart_install "${user}"
+        htpc_steamos_session_select_install
+    else
+        htpc_steam_launch_install
+        htpc_service_install "htpc-steam.service" "${user}"
+        htpc_steam_bigpicture_runtime_dir_uninstall
+        htpc_steam_bigpicture_boot_marker_uninstall
+        htpc_steamdeck_launch_uninstall
+        htpc_steam_autostart_uninstall "${user}"
         htpc_user_unit_mask "cachyos-gamescope-autologin.service" "${user}"
+        htpc_steamos_session_select_install
     fi
+    htpc_environment_no_at_bridge_install "${user}"
     htpc_display_manager_disable_and_record
 
     htpc_kodi_addons_install "${user}"

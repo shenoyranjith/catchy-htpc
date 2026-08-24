@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Btrfs snapshot management via snapper + grub-btrfs, per recovery-spec.md.
-# Requires lib/log.sh, lib/backup.sh, lib/packages.sh, and lib/btrfs.sh.
+# Btrfs snapshot management via snapper + bootloader-specific menu sync
+# (grub-btrfs or limine-snapper-sync), per recovery-spec.md.
+# Requires lib/log.sh, lib/backup.sh, lib/packages.sh, lib/btrfs.sh,
+# and lib/bootloader.sh.
 
 HTPC_SNAPPER_CONFIG="root"
 HTPC_SNAPSHOT_DESCRIPTION_PREFIX="cachyos-htpc-installer"
@@ -12,7 +14,71 @@ htpc_snapper_config_exists() {
         | grep -qx "${HTPC_SNAPPER_CONFIG}"
 }
 
-htpc_mkinitcpio_ensure_hook() {
+# True when mkinitcpio HOOKS use the systemd base (needs sd-btrfs-overlayfs
+# rather than btrfs-overlayfs for Limine writable snapshot boots).
+htpc_mkinitcpio_hooks_use_systemd() {
+    grep -qE '^HOOKS=\([^)]*\bsystemd\b' "${HTPC_MKINITCPIO_CONF}"
+}
+
+# Removes a single whole token from HOOKS=(...). Must match the full hook
+# name (not a hyphenated substring -- e.g. removing btrfs-overlayfs must
+# not mangle grub-btrfs-overlayfs into "grub-").
+htpc_mkinitcpio_remove_hook() {
+    local hook="$1" line inside new_inside=() token
+
+    if [[ ! -f "${HTPC_MKINITCPIO_CONF}" ]]; then
+        return 0
+    fi
+    if ! htpc_mkinitcpio_hook_present "${hook}"; then
+        return 0
+    fi
+
+    line="$(grep -E '^HOOKS=' "${HTPC_MKINITCPIO_CONF}")"
+    inside="${line#HOOKS=(}"
+    inside="${inside%)}"
+    # shellcheck disable=SC2086 # intentional word-splitting of HOOKS tokens
+    for token in ${inside}; do
+        if [[ "${token}" == "${hook}" ]]; then
+            continue
+        fi
+        new_inside+=("${token}")
+    done
+
+    sed -i -E "s|^HOOKS=\([^)]*\)|HOOKS=(${new_inside[*]})|" "${HTPC_MKINITCPIO_CONF}"
+    htpc_log_info "Removed mkinitcpio hook '${hook}'."
+}
+
+# True when HOOKS contains the exact hook token (space/paren delimited).
+htpc_mkinitcpio_hook_present() {
+    local hook="$1" line inside token
+
+    [[ -f "${HTPC_MKINITCPIO_CONF}" ]] || return 1
+    line="$(grep -E '^HOOKS=' "${HTPC_MKINITCPIO_CONF}")" || return 1
+    inside="${line#HOOKS=(}"
+    inside="${inside%)}"
+    # shellcheck disable=SC2086
+    for token in ${inside}; do
+        if [[ "${token}" == "${hook}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+htpc_mkinitcpio_regenerate() {
+    local bootloader="${1:-}"
+    if [[ "${bootloader}" == "limine" ]] && command -v limine-mkinitcpio >/dev/null 2>&1; then
+        htpc_log_info "Regenerating initramfs via limine-mkinitcpio."
+        limine-mkinitcpio
+    else
+        htpc_log_info "Regenerating initramfs via mkinitcpio -P."
+        mkinitcpio -P
+    fi
+}
+
+# Ensures hook is listed in HOOKS=(...), preferring insertion right after
+# the filesystems hook when present.
+htpc_mkinitcpio_add_hook() {
     local hook="$1"
 
     if [[ ! -f "${HTPC_MKINITCPIO_CONF}" ]]; then
@@ -20,22 +86,83 @@ htpc_mkinitcpio_ensure_hook() {
         return 1
     fi
 
-    if grep -qE "^HOOKS=.*\<${hook}\>" "${HTPC_MKINITCPIO_CONF}"; then
+    if htpc_mkinitcpio_hook_present "${hook}"; then
         htpc_log_info "mkinitcpio hook '${hook}' already present."
         return 0
     fi
 
-    htpc_backup_file "${HTPC_MKINITCPIO_CONF}"
+    if grep -qE '^HOOKS=\([^)]*\bfilesystems\b' "${HTPC_MKINITCPIO_CONF}"; then
+        sed -i -E "s/^(HOOKS=\([^)]*)\<filesystems\>/\1filesystems ${hook}/" \
+            "${HTPC_MKINITCPIO_CONF}"
+    else
+        sed -i -E "s/^(HOOKS=\([^)]*)\)/\1 ${hook})/" "${HTPC_MKINITCPIO_CONF}"
+    fi
 
-    sed -i -E "s/^(HOOKS=\([^)]*)\)/\1 ${hook})/" "${HTPC_MKINITCPIO_CONF}"
-
-    if ! grep -qE "^HOOKS=.*\<${hook}\>" "${HTPC_MKINITCPIO_CONF}"; then
+    if ! htpc_mkinitcpio_hook_present "${hook}"; then
         htpc_log_error "Failed to add '${hook}' to ${HTPC_MKINITCPIO_CONF}."
         return 1
     fi
 
-    htpc_log_info "Added '${hook}' to mkinitcpio HOOKS; regenerating initramfs."
-    mkinitcpio -P
+    htpc_log_info "Added '${hook}' to mkinitcpio HOOKS."
+}
+
+# Installs the overlayfs hook needed for writable snapshot boots for the
+# detected bootloader, removing any conflicting overlay hook left over
+# from the other family (common after GRUB↔Limine migrations).
+htpc_mkinitcpio_ensure_overlay_hook() {
+    local bootloader="$1"
+    local desired
+    local -a remove=()
+    local hook changed=false
+
+    if [[ ! -f "${HTPC_MKINITCPIO_CONF}" ]]; then
+        htpc_log_error "${HTPC_MKINITCPIO_CONF} not found."
+        return 1
+    fi
+
+    case "${bootloader}" in
+        limine)
+            if htpc_mkinitcpio_hooks_use_systemd; then
+                desired="sd-btrfs-overlayfs"
+                remove+=(btrfs-overlayfs grub-btrfs-overlayfs)
+            else
+                desired="btrfs-overlayfs"
+                remove+=(sd-btrfs-overlayfs grub-btrfs-overlayfs)
+            fi
+            ;;
+        grub)
+            desired="grub-btrfs-overlayfs"
+            remove+=(btrfs-overlayfs sd-btrfs-overlayfs)
+            ;;
+        *)
+            htpc_log_error "Unknown bootloader '${bootloader}'."
+            return 1
+            ;;
+    esac
+
+    for hook in "${remove[@]}"; do
+        if htpc_mkinitcpio_hook_present "${hook}"; then
+            if [[ "${changed}" == false ]]; then
+                htpc_backup_file "${HTPC_MKINITCPIO_CONF}"
+                changed=true
+            fi
+            htpc_mkinitcpio_remove_hook "${hook}"
+        fi
+    done
+
+    if ! htpc_mkinitcpio_hook_present "${desired}"; then
+        if [[ "${changed}" == false ]]; then
+            htpc_backup_file "${HTPC_MKINITCPIO_CONF}"
+            changed=true
+        fi
+        htpc_mkinitcpio_add_hook "${desired}" || return 1
+    else
+        htpc_log_info "mkinitcpio hook '${desired}' already present."
+    fi
+
+    if [[ "${changed}" == true ]]; then
+        htpc_mkinitcpio_regenerate "${bootloader}"
+    fi
 }
 
 # Replaces the subvol=... option in a mount options string with the given
@@ -131,11 +258,56 @@ htpc_snapshot_ensure_top_level_subvolume() {
     htpc_log_info "Mounted a dedicated top-level subvolume at /.snapshots."
 }
 
-# Installs and configures snapper + grub-btrfs so that bootable, writable
-# snapshots can be created and shown in the GRUB menu. Idempotent: safe to
-# call on every installer run.
+htpc_snapshot_ensure_tooling_grub() {
+    htpc_packages_install grub-btrfs
+
+    htpc_mkinitcpio_ensure_overlay_hook grub
+
+    if systemctl cat limine-snapper-sync.service >/dev/null 2>&1; then
+        systemctl disable --now limine-snapper-sync.service 2>/dev/null || true
+        htpc_log_info "Disabled limine-snapper-sync.service (active bootloader is GRUB)."
+    fi
+
+    systemctl enable grub-btrfsd.service
+    # Restarted rather than just started, so it re-establishes its watch
+    # cleanly if /.snapshots was just moved to a new mount by
+    # htpc_snapshot_ensure_top_level_subvolume.
+    systemctl restart grub-btrfsd.service
+}
+
+htpc_snapshot_ensure_tooling_limine() {
+    htpc_packages_install limine-snapper-sync limine-mkinitcpio-hook
+
+    htpc_mkinitcpio_ensure_overlay_hook limine
+
+    if systemctl cat grub-btrfsd.service >/dev/null 2>&1; then
+        systemctl disable --now grub-btrfsd.service 2>/dev/null || true
+        htpc_log_info "Disabled grub-btrfsd.service (active bootloader is Limine)."
+    fi
+
+    systemctl enable limine-snapper-sync.service
+    systemctl restart limine-snapper-sync.service
+    # Refresh snapshot boot entries now that /.snapshots / overlay hooks
+    # may have changed.
+    if command -v limine-snapper-sync >/dev/null 2>&1; then
+        limine-snapper-sync \
+            || htpc_log_warn "limine-snapper-sync failed; snapshot boot entries may be stale until the next sync."
+    fi
+}
+
+# Installs and configures snapper + the matching bootloader snapshot
+# integration so bootable, writable snapshots appear in the boot menu.
+# Idempotent: safe to call on every installer run.
 htpc_snapshot_ensure_tooling() {
-    htpc_packages_install snapper grub-btrfs inotify-tools
+    local bootloader menu
+
+    bootloader="$(htpc_bootloader_detect)"
+    menu="$(htpc_bootloader_menu_name "${bootloader}")"
+    htpc_log_info "Detected bootloader: ${menu}."
+
+    # Shared packages first: top-level subvolume layout and snapper config
+    # both need snapper / btrfs tooling available.
+    htpc_packages_install snapper inotify-tools
 
     htpc_snapshot_ensure_top_level_subvolume
 
@@ -144,13 +316,10 @@ htpc_snapshot_ensure_tooling() {
         snapper -c "${HTPC_SNAPPER_CONFIG}" create-config /
     fi
 
-    htpc_mkinitcpio_ensure_hook "grub-btrfs-overlayfs"
-
-    systemctl enable grub-btrfsd.service
-    # Restarted rather than just started, so it re-establishes its watch
-    # cleanly if /.snapshots was just moved to a new mount by
-    # htpc_snapshot_ensure_top_level_subvolume.
-    systemctl restart grub-btrfsd.service
+    case "${bootloader}" in
+        limine) htpc_snapshot_ensure_tooling_limine ;;
+        grub)   htpc_snapshot_ensure_tooling_grub ;;
+    esac
 }
 
 # Prints the number of the most recent installer-created snapshot, if any.
@@ -180,6 +349,35 @@ htpc_snapshot_create() {
     printf '%s\n' "${number}"
 }
 
+# Regenerates bootloader config after a restore from a normal (non-snapshot)
+# boot. From within a snapshot boot, /boot is typically not writable and
+# regeneration is unnecessary: the normal entry boots by subvolume name (@).
+htpc_snapshot_regenerate_bootloader() {
+    local bootloader="$1"
+
+    case "${bootloader}" in
+        grub)
+            if command -v grub-mkconfig >/dev/null 2>&1; then
+                grub-mkconfig -o /boot/grub/grub.cfg \
+                    || htpc_log_warn "grub-mkconfig failed; you may need to regenerate the GRUB menu manually."
+            else
+                htpc_log_warn "grub-mkconfig not found; skipping GRUB regeneration."
+            fi
+            ;;
+        limine)
+            if command -v limine-snapper-sync >/dev/null 2>&1; then
+                limine-snapper-sync \
+                    || htpc_log_warn "limine-snapper-sync failed; you may need to refresh Limine snapshot entries manually."
+            elif command -v limine-update >/dev/null 2>&1; then
+                limine-update \
+                    || htpc_log_warn "limine-update failed; you may need to refresh Limine entries manually."
+            else
+                htpc_log_warn "Neither limine-snapper-sync nor limine-update found; skipping Limine regeneration."
+            fi
+            ;;
+    esac
+}
+
 # Makes an existing snapshot the new, permanent root subvolume, replacing
 # the current one. snapper's own "rollback" command only changes the Btrfs
 # default subvolume, which has no effect here: /etc/fstab mounts root using
@@ -189,13 +387,14 @@ htpc_snapshot_create() {
 # The previous root subvolume is renamed to "@.broken-<timestamp>" rather
 # than deleted, so it can still be inspected or recovered from afterward.
 #
-# GRUB is only regenerated when run from a normal boot. From within a
-# snapshot boot (the recommended way to run this), /boot is not writable,
-# and it is not needed anyway: the normal boot entry boots by subvolume
-# name (@), not a hardcoded path, so it picks up the restored content on
-# its own once rebooted.
+# The bootloader menu is only regenerated when run from a normal boot. From
+# within a snapshot boot (the recommended way to run this), /boot is not
+# writable, and it is not needed anyway: the normal boot entry boots by
+# subvolume name (@), not a hardcoded path, so it picks up the restored
+# content on its own once rebooted.
 htpc_snapshot_restore() {
     local number="$1"
+    local bootloader menu
 
     if [[ ! "${number}" =~ ^[0-9]+$ ]]; then
         htpc_log_error "Usage: htpc-recovery restore <snapshot-number>"
@@ -207,12 +406,15 @@ htpc_snapshot_restore() {
         return 1
     fi
 
+    bootloader="$(htpc_bootloader_detect)"
+    menu="$(htpc_bootloader_menu_name "${bootloader}")"
+
     local booted_from_snapshot=true
     if [[ "$(htpc_btrfs_current_root_subvol)" == "/@" ]]; then
         local reply
         booted_from_snapshot=false
         htpc_log_warn "You appear to be booted into the normal system, not a snapshot."
-        htpc_log_warn "It is safer to reboot, select the snapshot from the GRUB menu, and run this from there."
+        htpc_log_warn "It is safer to reboot, select the snapshot from the ${menu} menu, and run this from there."
         read -r -p "Continue anyway? [y/N] " reply
         if [[ ! "${reply}" =~ ^[Yy]$ ]]; then
             htpc_log_info "Aborted."
@@ -241,11 +443,10 @@ htpc_snapshot_restore() {
     btrfs subvolume snapshot "${top}/${HTPC_SNAPSHOTS_SUBVOL}/${number}/snapshot" "${top}/@"
 
     if [[ "${booted_from_snapshot}" == true ]]; then
-        htpc_log_info "Skipping GRUB regeneration: /boot is not writable from within a snapshot boot session."
+        htpc_log_info "Skipping ${menu} regeneration: /boot is not writable from within a snapshot boot session."
         htpc_log_info "This is not required: the normal boot entry boots by subvolume name (@), not a hardcoded path, so it will pick up the restored content automatically."
-    elif command -v grub-mkconfig >/dev/null 2>&1; then
-        grub-mkconfig -o /boot/grub/grub.cfg \
-            || htpc_log_warn "grub-mkconfig failed; you may need to regenerate the GRUB menu manually."
+    else
+        htpc_snapshot_regenerate_bootloader "${bootloader}"
     fi
 
     htpc_log_info "Restore complete. The previous root is preserved as ${backup_name}."

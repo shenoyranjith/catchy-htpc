@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
-# GPU vendor detection and Steam Gaming Mode package/session helpers.
+# GPU vendor detection and NVIDIA merged Steam Gaming Mode helpers.
 # Requires lib/log.sh. See session-lifecycle.md and session-services-spec.md.
 #
-# Steam Gaming Mode always runs as dedicated htpc-steam.service:
-#   - AMD: gamescope-session-cachyos (start-gamescope-session)
-#   - NVIDIA: minimal gamescope + steam -steamdeck (bin/htpc-steam-launch)
-#
-# An earlier NVIDIA design folded Steam into htpc-desktop.service with a
-# Big Picture marker (htpc-steam-autostart / boot-marker / tmpfiles). Those
-# helpers remain here so a reinstall/uninstall can still remove leftovers
-# from v1.0.1; they are no longer installed on new NVIDIA setups.
+# Steam Gaming Mode:
+#   - AMD: dedicated htpc-steam.service (gamescope-session-cachyos)
+#   - NVIDIA: same htpc-desktop.service as KDE Desktop; nested gamescope +
+#     steam -steamdeck via bin/htpc-steamdeck-launch (Steam must be quit
+#     first). Exclusive DRM gamescope under a system unit failed Steam's
+#     userns/bwrap check on this hardware.
 
 HTPC_GPU_VENDOR_FILE="/etc/cachyos-htpc/gpu-vendor"
 HTPC_STEAM_BIGPICTURE_TMPFILES_CONF="/etc/tmpfiles.d/cachyos-htpc.conf"
-# The environment file itself (/run/cachyos-htpc/environment) was only used
-# by the retired NVIDIA Big Picture path. Kept for uninstall cleanup.
 HTPC_STEAM_BIGPICTURE_RUNTIME_DIR="/run/cachyos-htpc"
 HTPC_STEAM_BOOT_MARKER_DEST="/usr/local/bin/htpc-steam-bigpicture-boot-marker"
 HTPC_STEAM_AUTOSTART_DEST="/usr/local/bin/htpc-steam-autostart"
+HTPC_STEAMDECK_LAUNCH_DEST="/usr/local/bin/htpc-steamdeck-launch"
 
 htpc_gpu_autostart_script_source_path() {
     printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-steam-autostart"
@@ -29,6 +26,10 @@ htpc_gpu_boot_marker_source_path() {
 
 htpc_gpu_autostart_desktop_source_path() {
     printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../autostart" && pwd)/htpc-steam-autostart.desktop"
+}
+
+htpc_gpu_steamdeck_launch_source_path() {
+    printf '%s\n' "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/htpc-steamdeck-launch"
 }
 
 htpc_gpu_tmpfiles_template_path() {
@@ -102,13 +103,17 @@ htpc_gpu_vendor_get() {
 }
 
 # Resolves a session name (kodi/steam/desktop) to the systemd unit that
-# backs it. Always htpc-<name>.service (Steam is never folded into Desktop).
+# backs it. On NVIDIA, "steam" is htpc-desktop.service (nested Deck UI).
 htpc_session_unit_for() {
     local target="$1"
-    printf 'htpc-%s.service\n' "${target}"
+    if [[ "${target}" == "steam" ]] && [[ "$(htpc_gpu_vendor_get)" == "nvidia" ]]; then
+        printf 'htpc-desktop.service\n'
+    else
+        printf 'htpc-%s.service\n' "${target}"
+    fi
 }
 
-# --- Retired v1.0.1 NVIDIA Big Picture helpers (uninstall / leftover cleanup only) ---
+# --- NVIDIA Plasma session helpers (Gaming Mode marker / autostart) ---
 
 # Installs the tmpfiles.d drop-in that creates /run/cachyos-htpc (owned by
 # the target user) on every boot, before any htpc-*.service unit starts.
@@ -261,5 +266,30 @@ htpc_steam_autostart_uninstall() {
     if [[ -f "${desktop_dest}" ]]; then
         rm -f "${desktop_dest}"
         htpc_log_info "Removed ${desktop_dest}."
+    fi
+}
+
+# Installs bin/htpc-steamdeck-launch (nested gamescope Deck UI). NVIDIA only.
+htpc_steamdeck_launch_install() {
+    local script dest
+    script="$(htpc_gpu_steamdeck_launch_source_path)"
+    dest="${HTPC_STEAMDECK_LAUNCH_DEST}"
+
+    if [[ ! -f "${script}" ]]; then
+        htpc_log_error "htpc-steamdeck-launch not found at ${script}."
+        return 1
+    fi
+    if [[ -f "${dest}" ]] && cmp -s "${script}" "${dest}"; then
+        htpc_log_info "htpc-steamdeck-launch already installed and up to date."
+        return 0
+    fi
+    install -m 0755 "${script}" "${dest}"
+    htpc_log_info "Installed htpc-steamdeck-launch to ${dest}."
+}
+
+htpc_steamdeck_launch_uninstall() {
+    if [[ -f "${HTPC_STEAMDECK_LAUNCH_DEST}" ]]; then
+        rm -f "${HTPC_STEAMDECK_LAUNCH_DEST}"
+        htpc_log_info "Removed ${HTPC_STEAMDECK_LAUNCH_DEST}."
     fi
 }

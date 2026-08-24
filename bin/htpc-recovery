@@ -102,6 +102,8 @@ main() {
     source "${lib_dir}/packages.sh"
     # shellcheck source=../lib/btrfs.sh
     source "${lib_dir}/btrfs.sh"
+    # shellcheck source=../lib/bootloader.sh
+    source "${lib_dir}/bootloader.sh"
     # shellcheck source=../lib/snapshot.sh
     source "${lib_dir}/snapshot.sh"
 

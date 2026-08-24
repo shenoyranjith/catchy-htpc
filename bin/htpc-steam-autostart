@@ -1,37 +1,17 @@
 #!/usr/bin/env bash
 # KDE autostart entry for NVIDIA's merged Steam Gaming Mode / KDE Desktop
-# session (see lib/gpu.sh's own header for why NVIDIA doesn't get a
-# separate gamescope-based htpc-steam.service). Runs once, automatically,
-# every time htpc-desktop.service's own Plasma session starts fresh --
-# whether reached via Kodi's "Desktop Mode"/"Steam Gaming Mode" add-ons,
-# the KDE Desktop shortcuts, or booting straight into it (see
-# bin/htpc-steam-bigpicture-boot-marker for the boot case).
+# session. Runs once when htpc-desktop.service's Plasma session starts.
 #
-# Steam itself always autostarts here regardless of mode -- "Desktop Mode"
-# and "Steam Gaming Mode" are the exact same KDE Plasma session on NVIDIA,
-# differing only in whether Steam is additionally told to open Big
-# Picture. See htpc-switch's own header for how switching between the two
-# *while this session is already running* skips this script entirely and
-# messages the already-running Steam directly instead -- this script only
-# ever runs once, at this session's own startup.
+# On NVIDIA, "Desktop Mode" and "Steam Gaming Mode" share this Plasma
+# session. Gaming Mode launches nested gamescope + Steam Deck UI via
+# /usr/local/bin/htpc-steamdeck-launch (Steam must not already be running).
+# Desktop Mode starts the normal Steam desktop client.
 #
-# Deliberately does *not* try to detect Steam or Big Picture exiting and
-# hook that into anything -- unlike the gamescope-based htpc-steam.service,
-# quitting Steam (or just closing Big Picture) here is not a session-level
-# event at all, just an ordinary app in an ordinary KDE Desktop session.
-# An earlier design tied Steam's own process lifecycle to a dedicated
-# session unit's lifecycle (loginctl/systemd-unit teardown on exit) and
-# repeatedly broke Plasma in ways plain Desktop Mode never did; this
-# avoids all of that by not attempting it in the first place.
+# Switching between the two while Plasma is already up is handled by
+# htpc-switch in-process (see its header), not by this script.
 
 set -uo pipefail
 
-# Written by htpc-switch immediately before starting this session, or by
-# bin/htpc-steam-bigpicture-boot-marker on a cold boot. Sourced rather
-# than read as a raw 0/1 so HTPC_STEAM_BIGPICTURE is a real environment
-# variable for this script and for the Steam process it launches --
-# systemd EnvironmentFile= on htpc-desktop.service cannot do this for a
-# cold boot, because that file is parsed before ExecStartPre runs.
 HTPC_STEAM_BIGPICTURE_ENV="/run/cachyos-htpc/environment"
 if [[ -f "${HTPC_STEAM_BIGPICTURE_ENV}" ]]; then
     # shellcheck disable=SC1090
@@ -39,20 +19,14 @@ if [[ -f "${HTPC_STEAM_BIGPICTURE_ENV}" ]]; then
 fi
 export HTPC_STEAM_BIGPICTURE="${HTPC_STEAM_BIGPICTURE:-0}"
 
-# Backgrounded and disowned rather than exec'd: this script's own exit
-# should not depend on Steam's, and KDE's autostart handling of each
-# entry should not be made to wait on a possibly-slow Steam launch.
-#
-# `-bigpicture` rather than `steam://open/bigpicture`: the protocol URL
-# is handled only after Steam is already running *and* signed in online.
-# Confirmed live, passing it as the first launch argument on a cold boot
-# surfaces Steam's own "needs to be online" dialog and never opens Big
-# Picture. `-bigpicture` is Steam's own startup flag for that UI and does
-# not depend on the client already being up.
 if [[ "${HTPC_STEAM_BIGPICTURE}" == "1" ]]; then
-    echo "htpc-steam-autostart: Steam Gaming Mode requested; launching Steam -bigpicture." >&2
-    nohup /usr/bin/steam -bigpicture >/dev/null 2>&1 &
-    disown
+    echo "htpc-steam-autostart: Steam Gaming Mode; launching nested gamescope Steam Deck UI." >&2
+    if [[ -x /usr/local/bin/htpc-steamdeck-launch ]]; then
+        nohup /usr/local/bin/htpc-steamdeck-launch --start >/dev/null 2>&1 &
+        disown
+    else
+        echo "htpc-steam-autostart: htpc-steamdeck-launch missing." >&2
+    fi
 else
     echo "htpc-steam-autostart: Desktop Mode; starting Steam normally." >&2
     nohup /usr/bin/steam >/dev/null 2>&1 &

@@ -20,7 +20,7 @@ the test machine and take a snapshot. Every later step in this project
 against that snapshot, with a guaranteed way back if something leaves the
 machine unbootable:
 
-1. Reboot into the broken state's GRUB menu -> select the last known-good
+1. Reboot into the broken state's bootloader menu -> select the last known-good
    snapshot entry.
 2. Run `htpc-recovery restore <number>` to make it permanent again.
 

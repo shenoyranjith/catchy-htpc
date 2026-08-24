@@ -13,10 +13,11 @@ AMD and NVIDIA hardware -- htpc-switch always accepts kodi/steam/desktop
 and enforces the same rules regardless of GPU vendor. What differs is only
 *how* some sessions are realized:
 
-- **Steam Gaming Mode:** always its own `htpc-steam.service`. AMD runs
-  `start-gamescope-session`; NVIDIA runs a minimal
-  `gamescope … -- steam -steamdeck` (the full CachyOS session script broke
-  the Deck UI on cold boot).
+- **Steam Gaming Mode:** on AMD, dedicated `htpc-steam.service`
+  (`start-gamescope-session`); on NVIDIA, the same Plasma session as
+  Desktop with nested `gamescope … -- steam -steamdeck` (Steam must be
+  quit first; exclusive DRM gamescope under a system unit failed Steam's
+  userns/bwrap check).
 - **Kodi:** on AMD, GBM standalone; on NVIDIA, a kiosk `kwin_wayland` plus
   Kodi as a Wayland client (Kodi's own GBM backend aborts on current
   nvidia-open drivers). Still its own `htpc-kodi.service` either way.

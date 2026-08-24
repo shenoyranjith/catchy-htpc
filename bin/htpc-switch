@@ -5,11 +5,13 @@ set -euo pipefail
 # transition rules in session-lifecycle.md and applying the recovery rules
 # if the destination session fails to start. See session-manager-spec.md.
 #
-# All three map to distinct htpc-*.service units on every GPU. Steam Gaming
-# Mode is always htpc-steam.service (AMD: start-gamescope-session; NVIDIA:
-# minimal gamescope + steam -steamdeck -- see bin/htpc-steam-launch). An
-# earlier NVIDIA design merged steam into htpc-desktop.service with a Big
-# Picture marker; that path is retired (helpers below are unused).
+# On AMD, these three map to three distinct htpc-*.service units. On
+# NVIDIA (see htpc_steam_merged_with_desktop), "steam" and "desktop" are
+# the same htpc-desktop.service: Steam Gaming Mode is nested gamescope +
+# Steam Deck UI inside Plasma (bin/htpc-steamdeck-launch), toggled via
+# HTPC_STEAM_BIGPICTURE without restarting the session. Exclusive DRM
+# gamescope under a system unit failed Steam's userns/bwrap check; nested
+# under Plasma matches the console-proven path.
 #
 # Runs as the existing user (not root). A polkit rule installed alongside
 # this script grants passwordless start/stop/restart of only the three
@@ -78,26 +80,26 @@ htpc_gpu_vendor() {
     fi
 }
 
-# Retired: previously true on NVIDIA when Steam Gaming Mode was folded into
-# Plasma Big Picture. Always false now -- steam is htpc-steam.service on
-# every GPU (see bin/htpc-steam-launch). Big Picture helpers below stay so
-# a partial upgrade cannot call missing functions; they are never reached.
+# True when Steam Gaming Mode and KDE Desktop share htpc-desktop.service --
+# NVIDIA only. Nested gamescope + steam -steamdeck inside Plasma; see
+# bin/htpc-steamdeck-launch. AMD keeps a dedicated htpc-steam.service.
 htpc_steam_merged_with_desktop() {
-    return 1
+    [[ "$(htpc_gpu_vendor)" == "nvidia" ]]
 }
 
 declare -A HTPC_SESSION_UNIT=(
     [kodi]="htpc-kodi.service"
-    [steam]="htpc-steam.service"
     [desktop]="htpc-desktop.service"
 )
+if htpc_steam_merged_with_desktop; then
+    HTPC_SESSION_UNIT[steam]="htpc-desktop.service"
+else
+    HTPC_SESSION_UNIT[steam]="htpc-steam.service"
+fi
+
 # Reads/writes HTPC_STEAM_BIGPICTURE in /run/cachyos-htpc/environment --
-# "1" means Steam Gaming Mode (open Big Picture), "0" or absent means
-# Desktop Mode. A real KEY=VALUE environment file rather than a raw 0/1
-# marker, so bin/htpc-steam-autostart can source it and export the same
-# variable into Steam itself. See that script and
-# bin/htpc-steam-bigpicture-boot-marker for the other two places this
-# same file is read/written.
+# "1" means Steam Gaming Mode (nested gamescope Deck UI), "0" or absent
+# means Desktop Mode. Name kept for install-record / tmpfiles compatibility.
 htpc_bigpicture_marker_get() {
     if [[ -f "${HTPC_STEAM_BIGPICTURE_ENV}" ]]; then
         # Subshell so sourcing that file cannot leak into this process.
@@ -118,20 +120,25 @@ htpc_bigpicture_marker_set() {
 
 # Prints the name of the currently active session, or "boot" if none of the
 # htpc-*.service units are active (matching the Boot state in
-# session-lifecycle.md).
+# session-lifecycle.md). On NVIDIA, htpc-desktop.service being active is
+# ambiguous between "steam" and "desktop", disambiguated via the marker.
 htpc_current_session() {
     if systemctl is-active --quiet "${HTPC_SESSION_UNIT[kodi]}"; then
         printf 'kodi\n'
         return 0
     fi
 
-    if systemctl is-active --quiet "${HTPC_SESSION_UNIT[steam]}"; then
-        printf 'steam\n'
+    if systemctl is-active --quiet "${HTPC_SESSION_UNIT[desktop]}"; then
+        if htpc_steam_merged_with_desktop && [[ "$(htpc_bigpicture_marker_get)" == "1" ]]; then
+            printf 'steam\n'
+        else
+            printf 'desktop\n'
+        fi
         return 0
     fi
 
-    if systemctl is-active --quiet "${HTPC_SESSION_UNIT[desktop]}"; then
-        printf 'desktop\n'
+    if ! htpc_steam_merged_with_desktop && systemctl is-active --quiet "${HTPC_SESSION_UNIT[steam]}"; then
+        printf 'steam\n'
         return 0
     fi
 
@@ -346,10 +353,14 @@ htpc_worker_main() {
         # have connected yet).
         htpc_cleanup_accessibility_bus
 
-        # Leaving Desktop for Kodi or Steam: free DRM/KMS before the next
-        # exclusive compositor takes it. Harmless no-op if Plasma was never up.
-        if [[ "${current}" == "desktop" ]] && { [[ "${target}" == "kodi" ]] || [[ "${target}" == "steam" ]]; }; then
-            htpc_log_info "Ensuring Plasma has fully released the display before starting ${target}."
+        # Leaving Plasma for an exclusive DRM session (Kodi always; Steam
+        # only on AMD). On NVIDIA, steam stays inside this Plasma session.
+        if [[ "${target}" == "kodi" ]] && { [[ "${current}" == "desktop" ]] || [[ "${current}" == "steam" ]]; }; then
+            htpc_log_info "Ensuring Plasma has fully released the display before starting Kodi."
+            htpc_cleanup_plasma_session
+            sleep 2
+        elif [[ "${target}" == "steam" ]] && [[ "${current}" == "desktop" ]] && ! htpc_steam_merged_with_desktop; then
+            htpc_log_info "Ensuring Plasma has fully released the display before starting Steam."
             htpc_cleanup_plasma_session
             sleep 2
         fi
@@ -360,35 +371,36 @@ htpc_worker_main() {
         return
     fi
 
+    # NVIDIA: set the Deck-UI marker before Plasma (re)starts so autostart
+    # sees the right mode on a fresh session start.
+    if htpc_steam_merged_with_desktop && { [[ "${target}" == "steam" ]] || [[ "${target}" == "desktop" ]]; }; then
+        if [[ "${target}" == "steam" ]]; then
+            htpc_bigpicture_marker_set "1"
+        else
+            htpc_bigpicture_marker_set "0"
+        fi
+    fi
+
     if ! htpc_start_with_recovery "${target}"; then
         exit 1
     fi
 }
 
 # True when switching from $1 to $2 can be done without touching the
-# underlying systemd unit at all -- NVIDIA only, and only between "steam"
-# and "desktop", which (per htpc_steam_merged_with_desktop) are already
-# the same running htpc-desktop.service in that case. Kodi is always a
-# real, separate unit, so any transition into or out of "kodi" always goes
-# through htpc_worker_main's normal stop/start instead.
+# underlying systemd unit -- NVIDIA only, between "steam" and "desktop"
+# which share htpc-desktop.service (nested gamescope Deck UI vs plain Plasma).
 htpc_bigpicture_toggle_only() {
     local from="$1" to="$2"
     htpc_steam_merged_with_desktop || return 1
     case "${from}:${to}" in
-        # steam:steam is intentional: exiting Big Picture or quitting Steam
-        # does not change the marker (see bin/htpc-steam-autostart), so a
-        # later "htpc-switch steam" from the Desktop shortcut would otherwise
-        # look like a no-op. Re-opening Big Picture (fresh -bigpicture
-        # launch, or steam://open/bigpicture if Steam is still running)
-        # is the whole point of that click.
+        # steam:steam: Deck UI / Steam may have been quit without clearing
+        # the marker; a later "htpc-switch steam" must re-launch gamescope.
         desktop:steam|steam:desktop|steam:steam) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-# True when the Steam client itself is running (not leftover helpers
-# like steamwebhelper). Used to pick between a fresh `-bigpicture` launch
-# and a steam:// IPC to the already-running process.
+# True when the Steam client itself is running (not leftover helpers).
 htpc_steam_is_running() {
     local uid pid pidfile
     uid="$(id -u)"
@@ -405,46 +417,36 @@ htpc_steam_is_running() {
     return 1
 }
 
-# Opens Steam's Big Picture UI inside the already-running Plasma session.
-# Confirmed live, the two cases need different commands:
-#   - Steam not running (quit entirely, or never started): `steam -bigpicture`
-#     is the startup flag and works. Passing steam://open/bigpicture as the
-#     first launch argument instead surfaces "Steam needs to be online".
-#   - Steam already running in desktop UI (user exited Big Picture): a
-#     second `steam -bigpicture` just raises that desktop window. The
-#     running client only switches back to Big Picture if told via
-#     steam://open/bigpicture -- which is safe here because Steam is
-#     already up and signed in.
-# Run in this process, not via systemd-run: we are not stopping the
-# session (so we will not kill ourselves), and a transient user unit
-# often lacks WAYLAND_DISPLAY/DISPLAY from the live Plasma session.
-htpc_open_bigpicture() {
-    if htpc_steam_is_running; then
-        htpc_log_info "Steam already running; opening Big Picture via steam://open/bigpicture."
-        /usr/bin/steam steam://open/bigpicture >/dev/null 2>&1 &
-    else
-        htpc_log_info "Steam not running; launching steam -bigpicture."
-        /usr/bin/steam -bigpicture >/dev/null 2>&1 &
+# NVIDIA: start or stop nested gamescope + Steam Deck UI inside Plasma.
+# Always goes through htpc-steamdeck-launch so Steam is fully quit first
+# (gamescope will not launch correctly over a live desktop Steam client).
+htpc_open_steamdeck() {
+    if [[ ! -x /usr/local/bin/htpc-steamdeck-launch ]]; then
+        htpc_log_error "htpc-steamdeck-launch not installed."
+        return 1
     fi
-    disown
+    htpc_log_info "Launching nested gamescope Steam Deck UI."
+    /usr/local/bin/htpc-steamdeck-launch --start
 }
 
-# Performs the toggle-only transition above: updates the marker and, when
-# entering Steam Gaming Mode, opens Big Picture without restarting Plasma.
-#
-# Deliberately does nothing extra when entering "desktop" -- no attempt to
-# tell Steam to close Big Picture. Closing Big Picture (or quitting Steam
-# entirely) is not treated as a session-level event at all here; see
-# bin/htpc-steam-autostart's own header.
+htpc_close_steamdeck() {
+    if [[ -x /usr/local/bin/htpc-steamdeck-launch ]]; then
+        htpc_log_info "Stopping gamescope Steam Deck UI; returning to Plasma."
+        /usr/local/bin/htpc-steamdeck-launch --stop
+    fi
+}
+
+# Toggle-only NVIDIA transition: update marker and start/stop Deck UI
+# without restarting Plasma.
 htpc_worker_toggle_bigpicture() {
     local target="$1"
 
     if [[ "${target}" == "steam" ]]; then
         htpc_bigpicture_marker_set "1"
-        htpc_open_bigpicture
+        htpc_open_steamdeck
     else
         htpc_bigpicture_marker_set "0"
-        htpc_log_info "Marked Steam Gaming Mode as no longer the current mode."
+        htpc_close_steamdeck
     fi
 }
 

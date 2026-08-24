@@ -15,4 +15,4 @@
 ## Phase 2
 
 - [x] [MakeMKV / Blu-ray & UHD Blu-ray playback](makemkv-spec.md) (optional add-on)
-- [x] NVIDIA: Steam Gaming Mode via minimal gamescope + Steam Deck UI (`bin/htpc-steam-launch`; the full gamescope-session-cachyos path broke the Deck UI on cold boot -- see "Steam Gaming Mode" in [Session Services Specification](session-services-spec.md))
+- [x] NVIDIA: Steam Gaming Mode as nested gamescope + Steam Deck UI inside the KDE Desktop session (`bin/htpc-steamdeck-launch`; exclusive DRM gamescope under a system unit failed Steam userns/bwrap -- see "Steam Gaming Mode" in [Session Services Specification](session-services-spec.md))

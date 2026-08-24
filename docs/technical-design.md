@@ -10,7 +10,7 @@
 ## Boot Flow
 
 Firmware
--> GRUB (snapshot-aware via grub-btrfs)
+-> Limine or GRUB (snapshot-aware via limine-snapper-sync or grub-btrfs)
 -> Linux
 -> systemd starts htpc-kodi.service (enabled by default)
 -> PAM (PAMName=login) establishes a logind session for the existing user

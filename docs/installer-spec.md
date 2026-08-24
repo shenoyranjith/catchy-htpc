@@ -25,7 +25,8 @@ determining the target user: the installer re-execs itself from its
 installed copy (see Project Files below) before doing any real work, so
 every subsequent step already runs from the stable, installed location.
 
-Snapshot tooling (snapper, grub-btrfs, inotify-tools, and the @snapshots
+Snapshot tooling (snapper, inotify-tools, the bootloader-specific sync
+package -- grub-btrfs or limine-snapper-sync -- and the @snapshots
 subvolume layout) is actually ensured immediately before step 6, not as
 part of step 9: snapshot creation in steps 6-7 needs it ready first, and
 those packages may not be present yet on a fresh install even though
@@ -33,7 +34,9 @@ CachyOS ships Btrfs+snapper by default. `htpc_packages_install` is
 idempotent, so step 9 installing them again afterwards is a harmless
 no-op; only the packages actually missing before step 6 are recorded as
 "installed by the installer" (see Installation Record below), regardless
-of which step happened to trigger their installation.
+of which step happened to trigger their installation. The active
+bootloader is auto-detected (see [Recovery Specification](recovery-spec.md))
+and recorded as `BOOTLOADER` in the installation record.
 
 See [Recovery Specification](recovery-spec.md) for the snapshot mechanism
 itself, and [MakeMKV Specification](makemkv-spec.md) for what step 15 sets
@@ -58,7 +61,7 @@ The target user is whoever invokes the installer (for example, via `$SUDO_USER`)
 
 ## Snapshot Behaviour
 
-Snapshot tool: snapper, with grub-btrfs for GRUB boot menu integration. See [Recovery Specification](recovery-spec.md) for the full mechanism, including the required @snapshots subvolume layout.
+Snapshot tool: snapper, with bootloader-specific menu integration (grub-btrfs on GRUB; limine-snapper-sync on Limine). See [Recovery Specification](recovery-spec.md) for the full mechanism, including the required @snapshots subvolume layout and auto-detection.
 
 Snapshot creation is optional.
 
@@ -74,7 +77,7 @@ Ask whether to continue or abort.
 
 The installer never performs an automatic rollback.
 
-Recovery is performed by rebooting into the snapshot from GRUB, then running `htpc-recovery restore <number>` to make it permanent. See [Recovery Specification](recovery-spec.md).
+Recovery is performed by rebooting into the snapshot from the Limine or GRUB snapshot menu, then running `htpc-recovery restore <number>` to make it permanent. See [Recovery Specification](recovery-spec.md).
 
 ## System Update
 
@@ -89,19 +92,20 @@ on this project's own lib/ tree. This determines which of the two
 "Required Packages" / "Session Manager Installation" paths below apply.
 See "GPU-Dependent Unit Resolution" in [Session Manager Specification](session-manager-spec.md)
 and "Steam Gaming Mode" in [Session Services Specification](session-services-spec.md)
-for why NVIDIA is treated differently at all: the full
-`gamescope-session-cachyos` / `start-gamescope-session` path broke the
-Steam Deck UI on cold boot on this hardware, while a minimal
-`gamescope … -- steam -steamdeck` command works. NVIDIA therefore uses
-that minimal launch via `bin/htpc-steam-launch` instead of the CachyOS
-session package (and instead of the earlier Plasma Big Picture fold).
+for why NVIDIA is treated differently at all: exclusive DRM gamescope
+under a system unit fails Steam's userns/bwrap check on this hardware,
+while the same `gamescope … -- steam -steamdeck` command works nested
+under Plasma. NVIDIA therefore keeps Steam Gaming Mode inside
+`htpc-desktop.service` via `bin/htpc-steamdeck-launch` (Steam must be
+quit first), not a dedicated `htpc-steam.service`.
 
 ## Required Packages
 
 - kodi
 - snapper
-- grub-btrfs
-- inotify-tools (required by grub-btrfsd)
+- inotify-tools
+- GRUB only: grub-btrfs
+- Limine only: limine-snapper-sync, limine-mkinitcpio-hook
 
 AMD only, additionally:
 
@@ -118,12 +122,13 @@ Package sourcing prefers official CachyOS/Arch repositories, but AUR or other so
 
 ## Session Manager Installation
 
-- Install htpc-switch, htpc-kodi-launch, htpc-steam-launch, and all three systemd unit files (htpc-kodi.service, htpc-steam.service, htpc-desktop.service).
+- Install htpc-switch, htpc-kodi-launch, and htpc-kodi.service / htpc-desktop.service.
+- AMD: also install htpc-steam-launch and htpc-steam.service.
+- NVIDIA: do not install htpc-steam.service; install htpc-steamdeck-launch, the Steam Gaming Mode runtime dir (tmpfiles.d), boot-marker, and KDE autostart instead.
 - Install a polkit rule scoping passwordless control of the htpc-*.service units to the target user.
 - Install the `NO_AT_BRIDGE=1` environment.d drop-in for the target user's systemd --user manager, so D-Bus-activated helpers don't leak accessibility-bus units on every session switch. See "Accessibility Bus Cleanup" in [Session Services Specification](session-services-spec.md).
 - Disable and mask whichever display manager is currently configured (discovered via the display-manager.service alias, not hardcoded -- CachyOS KDE installs use plasmalogin.service, not sddm.service), recording its unit name and prior enabled/disabled state. Only disables and masks it for the next boot; does not stop it immediately, since the installer is typically run from within a live session driven by that same display manager.
 - Install /usr/bin/steamos-session-select as the htpc-switch wrapper (replacing gamescope-session-cachyos's copy on AMD; installing fresh on NVIDIA). AMD only: also mask cachyos-gamescope-autologin.service. See [Session Services Specification](session-services-spec.md).
-- Remove any leftover v1.0.1 NVIDIA Plasma Big Picture wiring (tmpfiles.d drop-in, boot-marker, KDE autostart) if present from an earlier install.
 
 ## Kodi Add-on Installation
 

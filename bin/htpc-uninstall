@@ -66,7 +66,7 @@ step_relocate_if_needed() {
 source_libs() {
     local lib_dir="$1"
     local lib
-    for lib in log backup checks packages btrfs snapshot services gpu kodi display_manager desktop_shortcuts install_record; do
+    for lib in log backup checks packages btrfs bootloader snapshot services gpu kodi display_manager desktop_shortcuts install_record; do
         # shellcheck disable=SC1090
         source "${lib_dir}/${lib}.sh"
     done
@@ -141,6 +141,7 @@ step_remove_gpu_artifacts() {
     local target_user="$1"
     htpc_steam_bigpicture_runtime_dir_uninstall
     htpc_steam_bigpicture_boot_marker_uninstall
+    htpc_steamdeck_launch_uninstall
     htpc_steam_autostart_uninstall "${target_user}"
     htpc_gpu_vendor_uninstall
 }

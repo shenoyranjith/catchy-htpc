@@ -2,23 +2,13 @@
 # Run as htpc-desktop.service's own ExecStartPre (`-` prefixed there, so
 # any failure here is ignored rather than blocking Plasma from starting).
 #
-# Only meaningful on NVIDIA -- see lib/gpu.sh's own header for why NVIDIA
-# has no separate gamescope-based htpc-steam.service, and instead uses
-# this same KDE Plasma session for both "Desktop Mode" and "Steam Gaming
-# Mode", distinguished only by HTPC_STEAM_BIGPICTURE in
-# /run/cachyos-htpc/environment (see bin/htpc-steam-autostart).
+# Only meaningful on NVIDIA, where this Plasma session backs both Desktop
+# Mode and Steam Gaming Mode (nested gamescope + Steam Deck UI), told apart
+# by HTPC_STEAM_BIGPICTURE in /run/cachyos-htpc/environment.
 #
-# htpc-switch itself always writes a definite HTPC_STEAM_BIGPICTURE=0 or
-# =1 there immediately before starting or toggling into this session (see
-# its own header), so the only time it is genuinely absent here is a cold
-# boot -- nothing else has run yet to have set it. In that case only, this
-# derives the correct value from BOOT_SESSION (see "Boot Configuration" in
-# installer-spec.md), so booting straight into Steam Gaming Mode opens Big
-# Picture immediately instead of landing on a plain desktop.
-#
-# Self-contained by design, like htpc-switch: reads the two fixed system
-# paths it needs directly rather than sourcing this project's lib/ tree,
-# so it keeps working even if that checkout is gone.
+# htpc-switch always writes that marker before starting/toggling this
+# session. The only time it is absent is a cold boot -- derive it from
+# BOOT_SESSION so booting into "steam" launches Deck UI via autostart.
 
 set -uo pipefail
 
@@ -28,9 +18,6 @@ HTPC_INSTALL_RECORD_PATH="/var/lib/cachyos-htpc/install-record"
 
 [[ -r "${HTPC_GPU_VENDOR_FILE}" ]] || exit 0
 [[ "$(cat "${HTPC_GPU_VENDOR_FILE}")" == "nvidia" ]] || exit 0
-
-# Already set for this boot -- either htpc-switch itself, or an earlier
-# run of this same script this boot -- leave it alone.
 [[ -f "${HTPC_STEAM_BIGPICTURE_ENV}" ]] && exit 0
 
 boot_session="desktop"

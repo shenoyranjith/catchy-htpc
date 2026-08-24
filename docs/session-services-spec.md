@@ -10,9 +10,10 @@ Defines the systemd services backing each session described in [Session Lifecycl
 
 These are system-level systemd units. No display manager is used to start them or to switch between them.
 
-How Steam Gaming Mode is launched inside htpc-steam.service depends on the
-GPU vendor (AMD: start-gamescope-session; NVIDIA: minimal gamescope +
-steam -steamdeck). See "Steam Gaming Mode" below and lib/gpu.sh.
+How Steam Gaming Mode is realized depends on the GPU vendor (AMD:
+dedicated htpc-steam.service + start-gamescope-session; NVIDIA: nested
+gamescope Deck UI inside htpc-desktop.service). See "Steam Gaming Mode"
+below and lib/gpu.sh.
 
 ## Shared Behaviour
 
@@ -40,38 +41,52 @@ steam -steamdeck). See "Steam Gaming Mode" below and lib/gpu.sh.
 
 How this is actually realized depends on the GPU vendor detected at
 install time (`htpc_gpu_vendor_install` in lib/gpu.sh, persisted to
-`/etc/cachyos-htpc/gpu-vendor`). Both vendors use a dedicated
-`htpc-steam.service`; only the ExecStart path inside `bin/htpc-steam-launch`
-differs.
+`/etc/cachyos-htpc/gpu-vendor`).
 
-### Shared (htpc-steam.service)
+`/usr/bin/steamos-session-select` is always the project's thin wrapper
+(bin/htpc-steamos-session-select):
 
-- Whether this unit is enabled to start automatically at boot depends on the choice made during installation, same as Kodi above -- see "Boot Configuration" in [Installer Specification](installer-spec.md).
-- `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`: lands on KDE Desktop, per "Shared Behaviour" above.
-- ExecStart runs `bin/htpc-steam-launch` (installed to `/usr/local/bin`).
-- `Delegate=yes`: Steam's pressure-vessel/bwrap must create user namespaces. Without cgroup delegation, a system unit fails with `bwrap: Unexpected capabilities but not setuid` / `Steam now requires user namespaces to be enabled` even when the same gamescope+steam command works from a normal user console. Confirmed live on NVIDIA.
-- `/usr/bin/steamos-session-select` is the project's thin wrapper (bin/htpc-steamos-session-select):
-  - gamescope -> htpc-switch steam
-  - plasma -> htpc-switch kodi
-  - persistent / oneshot -> no-op (SDDM autologin preference modes; not applicable here)
-- This makes Steam's own "Switch to Desktop" button return to Kodi, since Kodi is the primary interface. No SDDM interaction occurs at any point.
-- Steam may invoke this script via pkexec; htpc-switch handles dropping back to the existing user. See [Session Manager Specification](session-manager-spec.md). On AMD the original gamescope-session-cachyos script is backed up for the uninstaller; on NVIDIA the wrapper is installed fresh (no prior package file).
+- gamescope -> htpc-switch steam
+- plasma -> NVIDIA: htpc-switch desktop (same Plasma session); AMD: htpc-switch kodi
+- persistent / oneshot -> no-op (SDDM autologin preference modes; not applicable here)
 
-### AMD: start-gamescope-session
+Steam may invoke this script via pkexec; htpc-switch handles dropping back
+to the existing user. See [Session Manager Specification](session-manager-spec.md).
+On AMD the original gamescope-session-cachyos script is backed up for the
+uninstaller; on NVIDIA the wrapper is installed fresh (no prior package file).
+
+### AMD: htpc-steam.service + start-gamescope-session
 
 - Packages: gamescope-session-cachyos, lib32-gamescope, mangohud, lib32-mangohud (mangoapp for the QAM Performance Overlay).
-- `htpc-steam-launch` execs `/usr/bin/start-gamescope-session`.
+- Dedicated `htpc-steam.service` (Conflicts= with Kodi/Desktop). Whether it is enabled to start automatically at boot depends on the choice made during installation -- see "Boot Configuration" in [Installer Specification](installer-spec.md).
+- `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback desktop`.
+- ExecStart runs `bin/htpc-steam-launch`, which execs `/usr/bin/start-gamescope-session`.
+- `Delegate=yes`: Steam's pressure-vessel/bwrap needs user namespaces inside the service cgroup.
 - The package's SDDM-oriented autologin unit, cachyos-gamescope-autologin.service, is masked for the existing user.
+- Steam's "Switch to Desktop" returns to Kodi (primary interface).
 - A future gamescope-session-cachyos package update may overwrite steamos-session-select; re-running the installer re-applies the wrapper.
 
-### NVIDIA: minimal gamescope + Steam Deck UI
+### NVIDIA: nested gamescope inside htpc-desktop.service
 
-Confirmed live: launching `gamescope -w 3840 -h 2160 -r 60 -f -e -- steam -steamdeck` from a console works (Deck UI and games). The broken path was cold-booting via `start-gamescope-session` / gamescope-session-cachyos, not gamescope itself. An earlier Plasma Big Picture fold (v1.0.1) is retired.
+Exclusive DRM `gamescope` under `htpc-steam.service` failed Steam's
+pressure-vessel/bwrap user-namespace check on this hardware (Steam exits
+immediately; gamescope then crashes). The same `gamescope … -- steam
+-steamdeck` command works when nested under Plasma -- matching the
+console-proven path. So NVIDIA keeps the v1.0.1 "same Plasma session"
+model, but launches Deck UI via gamescope instead of `steam -bigpicture`.
 
-- Packages: gamescope, lib32-gamescope only (not gamescope-session-cachyos / mangohud).
-- `htpc-steam-launch` runs that minimal gamescope command (width/height/refresh overridable via `HTPC_GAMESCOPE_WIDTH` / `HEIGHT` / `REFRESH`).
-- No Plasma autostart / Big Picture marker / tmpfiles.d Steam mode file.
-- QAM "Performance Overlay" via mangoapp is not wired in this path (no session package flags).
+- No `htpc-steam.service` on NVIDIA; htpc-switch resolves "steam" to
+  `htpc-desktop.service`.
+- Packages: `gamescope`, `lib32-gamescope`.
+- `bin/htpc-steamdeck-launch` quits any running Steam/gamescope first
+  (Deck UI will not start cleanly over a live desktop Steam client), then
+  runs nested `gamescope -f -e -- steam -steamdeck`.
+- `HTPC_STEAM_BIGPICTURE=1` in `/run/cachyos-htpc/environment` means Gaming
+  Mode (name kept for compatibility); `=0` is Desktop Mode.
+- Autostart / boot-marker seed that marker; Desktop↔Steam toggles
+  in-process without restarting Plasma.
+- Steam's "Switch to Desktop" (`steamos-session-select plasma`) returns to
+  Desktop Mode in the same Plasma session (not Kodi).
 
 ## KDE Desktop (htpc-desktop.service)
 
@@ -79,6 +94,7 @@ Confirmed live: launching `gamescope -w 3840 -h 2160 -r 60 -f -e -- steam -steam
 - ExecStart runs startplasma-wayland directly as the existing user.
 - No SDDM or other display manager is involved.
 - Whether this unit is enabled to start automatically at boot depends on the choice made during installation, same as Kodi above -- see "Boot Configuration" in [Installer Specification](installer-spec.md).
+- On NVIDIA this unit also backs Steam Gaming Mode (nested gamescope Deck UI). `ExecStartPre` runs `htpc-steam-bigpicture-boot-marker` so a cold boot with `BOOT_SESSION=steam` seeds `HTPC_STEAM_BIGPICTURE=1` before Plasma starts; KDE autostart then launches `htpc-steamdeck-launch`.
 - `ExecStopPost=/usr/local/bin/htpc-switch --exit-fallback fatal`: unlike Kodi/Steam, lands on Fatal Error rather than KDE Desktop -- Desktop is already the last resort, so there is nowhere else to fall back to. See "Exit Fallback" in [Session Manager Specification](session-manager-spec.md).
 
 ## Desktop Application Shortcuts
