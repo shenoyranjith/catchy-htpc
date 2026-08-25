@@ -10,10 +10,12 @@ set -euo pipefail
 #   htpc-recovery setup                  Verify the system and prepare snapshot tooling.
 #   htpc-recovery create                 Create a new installer snapshot, replacing any
 #                                         previous one after confirmation.
+#   htpc-recovery list                   List snapper snapshots (use these numbers with restore).
 #   htpc-recovery status                 Show the current installer snapshot, if any.
 #   htpc-recovery restore <number>       Make an existing snapshot the new permanent
 #                                         root, preserving the old one as a backup.
-#   htpc-recovery list-backups           List backups left behind by 'restore'.
+#   htpc-recovery list-backups           List @.broken-* leftovers from a prior restore
+#                                         (not snapper snapshots -- see 'list').
 #   htpc-recovery delete-backup <name>   Delete a backup left behind by 'restore'.
 
 script_dir() {
@@ -67,6 +69,11 @@ cmd_status() {
     fi
 }
 
+cmd_list() {
+    require_root
+    htpc_snapshot_list
+}
+
 cmd_restore() {
     require_root
     local number="${1:-}"
@@ -85,7 +92,7 @@ cmd_delete_backup() {
 }
 
 usage() {
-    echo "Usage: $(basename "$0") {setup|create|status|restore <number>|list-backups|delete-backup <name>}" >&2
+    echo "Usage: $(basename "$0") {setup|create|list|status|restore <number>|list-backups|delete-backup <name>}" >&2
 }
 
 main() {
@@ -113,6 +120,7 @@ main() {
     case "${command}" in
         setup)          cmd_setup ;;
         create)         cmd_create ;;
+        list)           cmd_list ;;
         status)         cmd_status ;;
         restore)        cmd_restore "$@" ;;
         list-backups)   cmd_list_backups ;;

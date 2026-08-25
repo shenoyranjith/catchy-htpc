@@ -33,6 +33,7 @@ CachyOS machines may have both package families installed after a migration; onl
 
 - htpc-recovery setup
 - htpc-recovery create
+- htpc-recovery list
 - htpc-recovery status
 - htpc-recovery restore <number>
 - htpc-recovery list-backups
@@ -68,6 +69,13 @@ Then, based on detection:
 - Asks whether to replace it, if one exists.
 - Creates a new snapshot and prints its number.
 
+## list
+
+Lists all snapper snapshots for the root config (number, type, date,
+description). These are the numbers accepted by `restore`. Distinct from
+`list-backups`, which only shows `@.broken-*` leftovers from a prior
+restore.
+
 ## restore <number>
 
 Makes an existing snapshot the new permanent root, replacing the current one.
@@ -82,7 +90,9 @@ This never deletes the previous state automatically. It is kept as a `@.broken-<
 
 ## list-backups / delete-backup
 
-- list-backups shows any `@.broken-*` subvolumes left behind by restore.
+- list-backups shows any `@.broken-*` subvolumes left behind by restore --
+  not snapper snapshots. Use `htpc-recovery list` for those. When empty, it
+  says so and points at `list`.
 - delete-backup removes one by name, to reclaim disk space once the restored system is confirmed stable.
 
 ## Requirements

@@ -331,6 +331,18 @@ htpc_snapshot_find_previous() {
         | tail -n 1
 }
 
+# Lists snapper snapshots (what restore <number> accepts). Distinct from
+# htpc_snapshot_list_backups, which only shows @.broken-* leftovers from
+# a prior restore.
+htpc_snapshot_list() {
+    if ! htpc_snapper_config_exists; then
+        htpc_log_error "Snapper config '${HTPC_SNAPPER_CONFIG}' not found. Run 'htpc-recovery setup' first."
+        return 1
+    fi
+
+    snapper -c "${HTPC_SNAPPER_CONFIG}" list
+}
+
 htpc_snapshot_delete() {
     local number="$1"
     htpc_log_info "Removing previous installer snapshot #${number}."
@@ -457,11 +469,21 @@ htpc_snapshot_restore() {
 # Lists "@.broken-*" subvolumes left behind by htpc_snapshot_restore.
 htpc_snapshot_list_backups() {
     local top
+    local -a backups=()
+
     top="$(htpc_btrfs_mount_top_level)"
     # shellcheck disable=SC2064 # intentional: expand ${top} now, not at trap time
     trap "trap - RETURN; htpc_btrfs_unmount_top_level '${top}'" RETURN
 
-    find "${top}" -mindepth 1 -maxdepth 1 -name '@.broken-*' -printf '%f\n'
+    mapfile -t backups < <(find "${top}" -mindepth 1 -maxdepth 1 -name '@.broken-*' -printf '%f\n' | sort)
+
+    if [[ "${#backups[@]}" -eq 0 ]]; then
+        htpc_log_info "No @.broken-* restore leftovers found."
+        htpc_log_info "Snapper snapshots (for 'htpc-recovery restore <number>') are listed with: htpc-recovery list"
+        return 0
+    fi
+
+    printf '%s\n' "${backups[@]}"
 }
 
 # Deletes a "@.broken-*" backup subvolume left behind by
