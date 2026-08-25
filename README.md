@@ -14,23 +14,37 @@ Kodi is the primary interface.
 Steam Gaming Mode is the gaming workspace.
 KDE Desktop is the maintenance and recovery workspace.
 
+How those sessions are realized depends on the GPU:
+
+- **AMD:** exclusive systemd sessions for Kodi (GBM), Steam (`start-gamescope-session`), and Plasma.
+- **NVIDIA:** exclusive Kodi (kiosk `kwin_wayland`) and Plasma; Steam Gaming Mode is nested gamescope + Steam Deck UI inside that same Plasma session.
+
+See [Session Services](docs/session-services-spec.md) for the full split.
+
 ## Status
 
-Phase 1 (installer, uninstaller, session switching between all three
-workspaces, recovery) and the optional MakeMKV/Blu-ray add-on are
-complete. See [docs/roadmap.md](docs/roadmap.md) for details.
+- Installer and uninstaller
+- Session switching between Kodi, Steam Gaming Mode, and KDE Desktop (AMD and NVIDIA)
+- Recovery snapshots (Limine or GRUB)
+- Desktop shortcuts back to Kodi and Steam
+- Optional MakeMKV / Blu-ray playback add-on
+
+Released versions are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick Start
 
 Requires an existing CachyOS KDE installation on Btrfs (CachyOS's
-default). Run as the user you want the HTPC session to run as:
+default), with Limine or GRUB as the bootloader. Run as the user you
+want the HTPC session to run as:
 
 ```
 sudo bin/htpc-install
 ```
 
 The installer is interactive, safe to rerun, and offers to take a Btrfs
-snapshot before making any changes. See
+snapshot before making any changes. Snapshot boot-menu integration is
+wired for whichever bootloader is active (Limine via `limine-snapper-sync`,
+GRUB via `grub-btrfs`). See
 [docs/installer-spec.md](docs/installer-spec.md) for exactly what it
 does, and [docs/recovery-spec.md](docs/recovery-spec.md) for how to roll
 back if something goes wrong.
@@ -54,10 +68,10 @@ GitHub wiki. Highlights:
 
 - [Architecture](docs/architecture.md) -- components and design principles.
 - [Installer Specification](docs/installer-spec.md) -- what `bin/htpc-install` does.
-- [Recovery Specification](docs/recovery-spec.md) -- Btrfs snapshot/restore mechanism.
-- [Session Lifecycle](docs/session-lifecycle.md) / [Session Services](docs/session-services-spec.md) -- how switching between Kodi, Steam, and Desktop works.
+- [Recovery Specification](docs/recovery-spec.md) -- Btrfs snapshot/restore (Limine or GRUB).
+- [Session Lifecycle](docs/session-lifecycle.md) / [Session Services](docs/session-services-spec.md) -- how switching between Kodi, Steam, and Desktop works (including AMD vs NVIDIA).
 - [MakeMKV Specification](docs/makemkv-spec.md) -- optional Blu-ray/UHD Blu-ray playback add-on.
-- [Development](docs/development.md) -- dev machine setup and test workflow.
+- [Development](docs/development.md) -- dev machine setup, test sync, and Kodi config migrate across OS reinstalls.
 
 ## Contributing
 

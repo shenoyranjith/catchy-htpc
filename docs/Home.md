@@ -13,8 +13,7 @@ appliance-like HTPC.
 
 Kodi is the primary interface. Steam Gaming Mode is the gaming workspace.
 KDE Desktop is the maintenance and recovery workspace. See
-[Architecture](architecture.md) for how these fit together, and
-[Roadmap](roadmap.md) for current status.
+[Architecture](architecture.md) for how these fit together.
 
 ## Getting Started
 
@@ -34,7 +33,6 @@ KDE Desktop is the maintenance and recovery workspace. See
 - [Architecture](architecture.md) -- components and design principles.
 - [Technical Design](technical-design.md) -- boot flow, runtime model, privilege model.
 - [Session Lifecycle](session-lifecycle.md) -- valid session states and transitions.
-- [Roadmap](roadmap.md) -- what's done, what's not.
 
 ### Specifications
 

@@ -4,7 +4,6 @@
 - [Architecture](architecture.md)
 - [Technical Design](technical-design.md)
 - [Session Lifecycle](session-lifecycle.md)
-- [Roadmap](roadmap.md)
 
 **Specifications**
 - [Installer](installer-spec.md)
