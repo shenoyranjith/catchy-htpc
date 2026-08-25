@@ -77,10 +77,14 @@ model, but launches Deck UI via gamescope instead of `steam -bigpicture`.
 
 - No `htpc-steam.service` on NVIDIA; htpc-switch resolves "steam" to
   `htpc-desktop.service`.
-- Packages: `gamescope`, `lib32-gamescope`.
+- Packages: `gamescope`, `lib32-gamescope`, `mangohud`, `lib32-mangohud`
+  (`mangoapp` for the QAM Performance Overlay).
 - `bin/htpc-steamdeck-launch` quits any running Steam/gamescope first
   (Deck UI will not start cleanly over a live desktop Steam client), then
-  runs nested `gamescope -f -e -- steam -steamdeck`.
+  runs nested `gamescope -f -e --mangoapp -- steam -gamepadui -steamos3
+  -steampal -steamdeck` with the Deck-session mangoapp env vars
+  (`STEAM_USE_MANGOAPP=1`, etc.). `-steamos3` is what unlocks the QAM
+  Performance Overlay slider; `-steamdeck` alone leaves it disabled.
 - `HTPC_STEAM_BIGPICTURE=1` in `/run/cachyos-htpc/environment` means Gaming
   Mode (name kept for compatibility); `=0` is Desktop Mode.
 - Autostart / boot-marker seed that marker; Desktop↔Steam toggles

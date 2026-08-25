@@ -117,6 +117,7 @@ NVIDIA only, additionally:
 
 - gamescope
 - lib32-gamescope
+- mangohud / lib32-mangohud (provides `mangoapp` for the Deck QAM Performance Overlay under nested gamescope; same reason as on AMD)
 
 Package sourcing prefers official CachyOS/Arch repositories, but AUR or other sources may be used where clearly better suited to a specific need.
 

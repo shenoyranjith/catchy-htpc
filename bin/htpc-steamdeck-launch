@@ -70,7 +70,7 @@ htpc_steamdeck_stop() {
 }
 
 htpc_steamdeck_start() {
-    local width height refresh
+    local width height refresh mangohud_cfg
     local -a gs_cmd
 
     if ! command -v gamescope >/dev/null 2>&1; then
@@ -88,6 +88,21 @@ htpc_steamdeck_start() {
     height="${HTPC_GAMESCOPE_HEIGHT-2160}"
     refresh="${HTPC_GAMESCOPE_REFRESH-60}"
 
+    # Steam's QAM Performance Overlay toggle stays disabled unless these
+    # Deck-session env vars are set (gamescope-session-cachyos / ChimeraOS
+    # steam session.d export the same). --mangoapp alone is not enough.
+    if ! command -v mangoapp >/dev/null 2>&1; then
+        htpc_steamdeck_log "mangoapp not found; Performance Overlay will not work. Install mangohud (and lib32-mangohud)."
+    fi
+    mangohud_cfg="$(mktemp /tmp/htpc-mangohud.XXXXXXXX)"
+    # Start hidden until Steam enables a preset via the QAM slider.
+    printf 'no_display\n' > "${mangohud_cfg}"
+    export MANGOHUD_CONFIGFILE="${mangohud_cfg}"
+    export STEAM_USE_MANGOAPP=1
+    export STEAM_MANGOAPP_PRESETS_SUPPORTED=1
+    export STEAM_MANGOAPP_HORIZONTAL_SUPPORTED=1
+    export STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND=1
+
     gs_cmd=(/usr/bin/gamescope)
     if [[ -n "${width}" ]]; then
         gs_cmd+=(-w "${width}")
@@ -98,10 +113,15 @@ htpc_steamdeck_start() {
     if [[ -n "${refresh}" ]]; then
         gs_cmd+=(-r "${refresh}")
     fi
-    # Nested under Plasma: -f fullscreen window, -e Steam integration.
-    gs_cmd+=(-f -e -- /usr/bin/steam -steamdeck)
+    # Nested under Plasma: -f fullscreen, -e Steam integration, --mangoapp
+    # for the overlay compositor path (plain MangoHud does not work here).
+    # -steamos3 is required for the QAM Performance Overlay slider (and other
+    # SteamOS performance controls) to be enabled; -steamdeck alone is not
+    # enough. -gamepadui/-steampal match the ChimeraOS/CachyOS steam session.
+    # Switch-to-Desktop still goes through our steamos-session-select wrapper.
+    gs_cmd+=(-f -e --mangoapp -- /usr/bin/steam -gamepadui -steamos3 -steampal -steamdeck)
 
-    htpc_steamdeck_log "Starting: ${gs_cmd[*]}"
+    htpc_steamdeck_log "Starting: ${gs_cmd[*]} (STEAM_USE_MANGOAPP=1)"
     nohup "${gs_cmd[@]}" >/dev/null 2>&1 &
     disown
 }

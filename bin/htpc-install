@@ -17,9 +17,10 @@ HTPC_PROJECT_DIR="/opt/cachyos-htpc"
 HTPC_REQUIRED_PACKAGES_COMMON=(kodi snapper inotify-tools)
 # AMD: full CachyOS gamescope session (QAM performance overlay via mangoapp).
 HTPC_REQUIRED_PACKAGES_GAMESCOPE_AMD=(gamescope-session-cachyos lib32-gamescope mangohud lib32-mangohud)
-# NVIDIA: plain gamescope only -- nested under Plasma via
-# bin/htpc-steamdeck-launch (no gamescope-session-cachyos).
-HTPC_REQUIRED_PACKAGES_GAMESCOPE_NVIDIA=(gamescope lib32-gamescope)
+# NVIDIA: plain gamescope nested under Plasma via bin/htpc-steamdeck-launch
+# (no gamescope-session-cachyos). mangohud provides mangoapp for the Deck
+# QAM Performance Overlay (--mangoapp on the gamescope command).
+HTPC_REQUIRED_PACKAGES_GAMESCOPE_NVIDIA=(gamescope lib32-gamescope mangohud lib32-mangohud)
 
 script_dir() {
     cd "$(dirname "${BASH_SOURCE[0]}")" && pwd

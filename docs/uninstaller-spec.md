@@ -18,7 +18,7 @@ bin/htpc-uninstall
 10. Remove installed Kodi add-ons and the htpc-kodi.desktop / htpc-steam.desktop shortcuts, both from the application launcher directory and from the user's Desktop folder.
 11. Remove only the favourites.xml entries added by the installer, preserving any other entries.
 12. Remove the installation record itself.
-13. Ask whether to remove packages installed by the installer (whatever was recorded -- typically kodi, snapper, inotify-tools, plus grub-btrfs or limine-snapper-sync / limine-mkinitcpio-hook depending on bootloader; gamescope packages too if this was an AMD install).
+13. Ask whether to remove packages installed by the installer (whatever was recorded -- typically kodi, snapper, inotify-tools, plus grub-btrfs or limine-snapper-sync / limine-mkinitcpio-hook depending on bootloader; gamescope / mangohud packages too when those were installed for Steam Gaming Mode).
 14. Verify removal.
 15. Prompt for reboot.
 

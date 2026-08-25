@@ -17,7 +17,7 @@ KDE Desktop is the maintenance and recovery workspace.
 How those sessions are realized depends on the GPU:
 
 - **AMD:** exclusive systemd sessions for Kodi (GBM), Steam (`start-gamescope-session`), and Plasma.
-- **NVIDIA:** exclusive Kodi (kiosk `kwin_wayland`) and Plasma; Steam Gaming Mode is nested gamescope + Steam Deck UI inside that same Plasma session.
+- **NVIDIA:** exclusive Kodi (kiosk `kwin_wayland`) and Plasma; Steam Gaming Mode is nested gamescope + Steam Deck UI (`--mangoapp`, `-steamos3`) inside that same Plasma session.
 
 See [Session Services](docs/session-services-spec.md) for the full split.
 
