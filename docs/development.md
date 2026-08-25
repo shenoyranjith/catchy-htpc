@@ -59,6 +59,25 @@ Usage:
 dev/sync.sh
 ```
 
+## Migrating Kodi Config Across a Clean OS Reinstall
+
+`dev/kodi-config-migrate.sh` pulls the HTPC user's `~/.kodi` onto this
+machine (and pushes it back later). It is standalone -- not part of
+`htpc-install`.
+
+```
+# Before wiping the OS
+dev/kodi-config-migrate.sh backup
+
+# After reinstall + htpc-install
+dev/kodi-config-migrate.sh restore dev/backups/kodi-config-YYYYMMDD-HHMMSS.tar.zst
+```
+
+Archives land in `dev/backups/` (gitignored). Thumbnails and `temp/` are
+omitted by default; pass `--full` to include them. Restore after
+`htpc-install` so your userdata overwrites the installer's seeded
+defaults.
+
 ## Typical Workflow
 
 1. Make changes locally.
